@@ -305,7 +305,7 @@ function renderPestañas() {
     b.className = 'pestaña pestaña-privada' + (canalId === privadoActivo ? ' activa' : '') + ((p.sinLeer || p.nuevo) ? ' con-nuevo' : '');
     b.style.setProperty('--c', '#0FA3B1');
     b.title = 'Chat privado con ' + p.conNick;
-    b.textContent = '🔒 ' + p.conNick + (p.conectado ? '' : ' (desconectado)');
+    b.textContent = '🔒 ' + (llamadaEnCurso(canalId) ? '📹 ' : '') + p.conNick + (p.conectado ? '' : ' (desconectado)');
     if (p.sinLeer || p.nuevo) {
       const n = document.createElement('span');
       n.className = 'pestaña-aviso';
@@ -325,9 +325,10 @@ function renderPestañas() {
 function renderBarraPrivado() {
   const p = privadoActual();
   barraPrivado.classList.toggle('oculto', !p);
-  if (!p) return;
+  if (!p) { pintarLlamada(); return; }
   barraPrivadoTitulo.textContent = `Chat privado con ${p.conNick}${p.conectado ? '' : ' (se ha desconectado)'}`;
   btnSilenciarPrivado.textContent = usuariosIgnorados.has(p.conNick) ? '🔇 Silenciado' : '🔊 Silenciar';
+  pintarLlamada();
 }
 
 function actualizarCompositor() {
@@ -376,7 +377,7 @@ function renderMensajesPrivadoCentro(p) {
     return;
   }
   if (p.mensajes.length === 0) {
-    chat.innerHTML = `<p class="aviso-silenciado">Aquí empieza tu conversación privada con ${escapar(p.conNick)}. Nadie más puede verla.</p>`;
+    chat.innerHTML = `<p class="aviso-silenciado">Aquí empieza tu conversación privada con ${escapar(p.conNick)}. Nadie más puede verla.<br><br>📹 En este privado puedes hacer una <b>videollamada</b> (con cámara y audio) con el botón de arriba. No empieza hasta que la otra persona acepte y solo existe aquí, entre vosotros dos.</p>`;
     return;
   }
   p.mensajes.forEach(m => {
@@ -813,6 +814,7 @@ socket.on('sesionCerrada', ({ nick }) => {
   salaActiva = null;
   privadoActivo = null;
   estadoFoto = { tiene: false, v: null, pendiente: null, rechazada: null };
+  limpiarLlamada();
   Object.keys(privados).forEach(k => delete privados[k]);
   Object.keys(mensajesPorSala).forEach(k => delete mensajesPorSala[k]);
   cuentaAnonima.classList.remove('oculto');
@@ -1080,6 +1082,7 @@ btnSilenciarPrivado.addEventListener('click', () => {
 btnCerrarPrivado.addEventListener('click', () => {
   if (!privadoActivo) return;
   const canalId = privadoActivo;
+  if (llamada.canalId === canalId) limpiarLlamada();
   socket.emit('cerrarPrivado', { canalId });
   delete privados[canalId];
   privadoActivo = null;
@@ -1234,6 +1237,223 @@ listaFotos.addEventListener('click', (e) => {
   const r = e.target.closest('.btn-rechazar-foto');
   if (a) socket.emit('resolverAvatar', { usuario: a.dataset.u, aprobar: true });
   if (r) socket.emit('resolverAvatar', { usuario: r.dataset.u, aprobar: false });
+});
+
+
+// ---- Videollamada (solo existe dentro de un chat privado y solo si los dos aceptan) ----
+let iceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
+socket.on('iceServers', (l) => { if (Array.isArray(l) && l.length) iceServers = l; });
+
+const btnLlamada = document.getElementById('btnLlamada');
+const invitacionLlamada = document.getElementById('invitacionLlamada');
+const invitacionTexto = document.getElementById('invitacionTexto');
+const btnAceptarLlamada = document.getElementById('btnAceptarLlamada');
+const btnRechazarLlamada = document.getElementById('btnRechazarLlamada');
+const btnCancelarLlamada = document.getElementById('btnCancelarLlamada');
+const panelLlamada = document.getElementById('panelLlamada');
+const videoRemoto = document.getElementById('videoRemoto');
+const videoLocal = document.getElementById('videoLocal');
+const llamadaEstadoEl = document.getElementById('llamadaEstado');
+const btnMic = document.getElementById('btnMic');
+const btnCam = document.getElementById('btnCam');
+const btnColgar = document.getElementById('btnColgar');
+
+// estado: idle | solicitando | entrante | conectando | activa
+const llamada = { canalId: null, estado: 'idle', pc: null, stream: null, pendientes: [], temporizador: null };
+const llamadaEnCurso = (canalId) => llamada.canalId === canalId && (llamada.estado === 'conectando' || llamada.estado === 'activa');
+
+function pintarLlamada() {
+  const p = privadoActual();
+  const enEste = !!p && llamada.canalId === privadoActivo;
+  btnLlamada.disabled = !p || !p.conectado || llamada.estado !== 'idle';
+  btnLlamada.title = llamada.estado !== 'idle' && !enEste ? 'Ya estás en una videollamada con otra persona' : '';
+  btnLlamada.textContent = enEste && llamada.estado === 'solicitando' ? '📹 Llamando…' : '📹 Videollamada';
+
+  const invitando = enEste && (llamada.estado === 'entrante' || llamada.estado === 'solicitando');
+  invitacionLlamada.classList.toggle('oculto', !invitando);
+  if (invitando) {
+    const entrante = llamada.estado === 'entrante';
+    invitacionTexto.textContent = entrante
+      ? `📹 ${p.conNick} quiere hacer una videollamada contigo. Es directa entre vosotros dos y la otra persona podría llegar a ver tu dirección IP.`
+      : `📹 Esperando a que ${p.conNick} acepte la videollamada…`;
+    btnAceptarLlamada.classList.toggle('oculto', !entrante);
+    btnRechazarLlamada.classList.toggle('oculto', !entrante);
+    btnCancelarLlamada.classList.toggle('oculto', entrante);
+  }
+  const verPanel = enEste && (llamada.estado === 'conectando' || llamada.estado === 'activa');
+  panelLlamada.classList.toggle('oculto', !verPanel);
+  llamadaEstadoEl.classList.toggle('oculto', llamada.estado === 'activa');
+}
+
+function limpiarLlamada() {
+  clearTimeout(llamada.temporizador);
+  if (llamada.pc) { try { llamada.pc.close(); } catch (e) { /* nada */ } }
+  if (llamada.stream) llamada.stream.getTracks().forEach(t => t.stop());
+  videoRemoto.srcObject = null;
+  videoLocal.srcObject = null;
+  llamada.canalId = null; llamada.estado = 'idle'; llamada.pc = null; llamada.stream = null; llamada.pendientes = [];
+  btnMic.textContent = '🎤'; btnCam.textContent = '📷';
+  renderPestañas();
+}
+
+async function obtenerMedia() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('sin-soporte');
+  const audio = { echoCancellation: true, noiseSuppression: true };
+  try {
+    return await navigator.mediaDevices.getUserMedia({ audio, video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' } });
+  } catch (e) {
+    if (e && (e.name === 'NotFoundError' || e.name === 'OverconstrainedError')) {
+      mostrarToast('No se ha detectado cámara: la llamada será solo de audio.');
+      return await navigator.mediaDevices.getUserMedia({ audio });
+    }
+    throw e;
+  }
+}
+function textoErrorMedia(e) {
+  if (e && e.message === 'sin-soporte') return 'Este navegador no permite usar cámara y micrófono aquí.';
+  if (e && e.name === 'NotAllowedError') return 'No has dado permiso a la cámara y el micrófono. Actívalo en los permisos del navegador y vuelve a intentarlo.';
+  return 'No se ha podido usar la cámara o el micrófono. Comprueba que no los esté usando otra aplicación.';
+}
+
+function crearConexion(canalId, stream) {
+  const pc = new RTCPeerConnection({ iceServers });
+  llamada.pc = pc;
+  llamada.stream = stream;
+  videoLocal.srcObject = stream;
+  stream.getTracks().forEach(t => pc.addTrack(t, stream));
+  pc.onicecandidate = (e) => { if (e.candidate) socket.emit('llamadaSenal', { canalId, data: { candidate: e.candidate } }); };
+  pc.ontrack = (e) => { videoRemoto.srcObject = e.streams[0]; };
+  pc.onconnectionstatechange = () => {
+    if (llamada.pc !== pc) return;
+    if (pc.connectionState === 'connected') {
+      clearTimeout(llamada.temporizador);
+      llamada.estado = 'activa';
+      pintarLlamada();
+    } else if (pc.connectionState === 'failed') {
+      socket.emit('llamadaColgar', { canalId });
+      limpiarLlamada();
+      avisar('No se ha podido establecer la conexión de vídeo. Algunas redes (por ejemplo ciertas conexiones móviles o de empresa) no lo permiten.', 'Videollamada');
+    }
+  };
+  llamada.temporizador = setTimeout(() => {
+    if (llamada.pc === pc && llamada.estado === 'conectando') {
+      socket.emit('llamadaColgar', { canalId });
+      limpiarLlamada();
+      avisar('La conexión de vídeo ha tardado demasiado. Puede que vuestras redes no permitan la videollamada directa.', 'Videollamada');
+    }
+  }, 30000);
+  return pc;
+}
+
+btnLlamada.addEventListener('click', async () => {
+  const p = privadoActual();
+  if (!p || llamada.estado !== 'idle') return;
+  const ok = await confirmar(`Vas a pedirle a ${p.conNick} una videollamada con cámara y audio. Solo empezará si acepta.\\n\\nLa conexión es directa entre vosotros dos: la otra persona podría llegar a ver tu dirección IP.`, { titulo: '📹 Videollamada', aceptar: 'Pedir videollamada' });
+  if (!ok || llamada.estado !== 'idle' || !privados[privadoActivo]) return;
+  llamada.canalId = privadoActivo;
+  llamada.estado = 'solicitando';
+  socket.emit('llamadaSolicitar', { canalId: privadoActivo });
+  pintarLlamada();
+});
+btnCancelarLlamada.addEventListener('click', () => { if (llamada.canalId) socket.emit('llamadaColgar', { canalId: llamada.canalId }); limpiarLlamada(); });
+btnRechazarLlamada.addEventListener('click', () => {
+  if (llamada.canalId) socket.emit('llamadaResponder', { canalId: llamada.canalId, aceptar: false });
+  limpiarLlamada();
+});
+btnAceptarLlamada.addEventListener('click', async () => {
+  const canalId = llamada.canalId;
+  if (!canalId || llamada.estado !== 'entrante') return;
+  try {
+    const stream = await obtenerMedia();
+    if (llamada.canalId !== canalId || llamada.estado !== 'entrante') { stream.getTracks().forEach(t => t.stop()); return; }
+    llamada.estado = 'conectando';
+    crearConexion(canalId, stream);
+    socket.emit('llamadaResponder', { canalId, aceptar: true });
+    pintarLlamada();
+    renderPestañas();
+  } catch (e) {
+    socket.emit('llamadaResponder', { canalId, aceptar: false });
+    limpiarLlamada();
+    avisar(textoErrorMedia(e), 'Videollamada');
+  }
+});
+btnColgar.addEventListener('click', () => { if (llamada.canalId) socket.emit('llamadaColgar', { canalId: llamada.canalId }); limpiarLlamada(); });
+btnMic.addEventListener('click', () => {
+  if (!llamada.stream) return;
+  const t = llamada.stream.getAudioTracks()[0];
+  if (!t) return;
+  t.enabled = !t.enabled;
+  btnMic.textContent = t.enabled ? '🎤' : '🔇';
+  btnMic.classList.toggle('apagado', !t.enabled);
+});
+btnCam.addEventListener('click', () => {
+  if (!llamada.stream) return;
+  const t = llamada.stream.getVideoTracks()[0];
+  if (!t) return;
+  t.enabled = !t.enabled;
+  btnCam.textContent = t.enabled ? '📷' : '🚫';
+  btnCam.classList.toggle('apagado', !t.enabled);
+});
+
+// Me piden una videollamada
+socket.on('llamadaSolicitud', ({ canalId, de }) => {
+  if (!privados[canalId] || llamada.estado !== 'idle') { socket.emit('llamadaResponder', { canalId, aceptar: false }); return; }
+  llamada.canalId = canalId;
+  llamada.estado = 'entrante';
+  privados[canalId].nuevo = true;
+  avisarMensajePrivadoNuevo();
+  mostrarToast(`${de} quiere hacer una videollamada (mira su pestaña privada).`);
+  renderPestañas();
+});
+// Han aceptado mi petición: preparo cámara y envío la oferta
+socket.on('llamadaAceptada', async ({ canalId }) => {
+  if (llamada.canalId !== canalId || llamada.estado !== 'solicitando') return;
+  try {
+    const stream = await obtenerMedia();
+    if (llamada.canalId !== canalId) { stream.getTracks().forEach(t => t.stop()); return; }
+    llamada.estado = 'conectando';
+    const pc = crearConexion(canalId, stream);
+    pintarLlamada();
+    renderPestañas();
+    const oferta = await pc.createOffer();
+    await pc.setLocalDescription(oferta);
+    socket.emit('llamadaSenal', { canalId, data: { sdp: pc.localDescription } });
+  } catch (e) {
+    socket.emit('llamadaColgar', { canalId });
+    limpiarLlamada();
+    avisar(textoErrorMedia(e), 'Videollamada');
+  }
+});
+socket.on('llamadaSenal', async ({ canalId, data }) => {
+  if (llamada.canalId !== canalId || !llamada.pc || !data) return;
+  const pc = llamada.pc;
+  try {
+    if (data.sdp) {
+      await pc.setRemoteDescription(data.sdp);
+      if (data.sdp.type === 'offer') {
+        const resp = await pc.createAnswer();
+        await pc.setLocalDescription(resp);
+        socket.emit('llamadaSenal', { canalId, data: { sdp: pc.localDescription } });
+      }
+      for (const c of llamada.pendientes.splice(0)) await pc.addIceCandidate(c);
+    } else if (data.candidate) {
+      if (pc.remoteDescription) await pc.addIceCandidate(data.candidate);
+      else llamada.pendientes.push(data.candidate);
+    }
+  } catch (e) { /* una señal suelta que falla no tumba la llamada */ }
+});
+socket.on('llamadaFin', ({ canalId, motivo }) => {
+  if (llamada.canalId !== canalId) return;
+  const nombre = privados[canalId] ? privados[canalId].conNick : 'La otra persona';
+  const textos = {
+    rechazada: `${nombre} ha rechazado la videollamada.`,
+    sin_respuesta: `${nombre} no ha respondido a la videollamada.`,
+    colgada: 'La videollamada ha terminado.',
+    desconexion: 'La videollamada ha terminado porque la otra persona se ha desconectado.',
+    privado_cerrado: 'La videollamada ha terminado.'
+  };
+  limpiarLlamada();
+  mostrarToast(textos[motivo] || 'La videollamada ha terminado.');
 });
 
 // ================== PANTALLAS: ACCESO / CHAT ==================
@@ -1596,6 +1816,20 @@ socket.on('imagenModeracion', (d) => {
 });
 document.getElementById('btnCerrarImagen').addEventListener('click', () => modalImagen.classList.add('oculto'));
 modalImagen.addEventListener('click', (e) => { if (e.target === modalImagen) modalImagen.classList.add('oculto'); });
+document.getElementById('btnGuardarImagen').addEventListener('click', () => {
+  if (!imagenActual) return;
+  const m = /^data:image\/([a-z0-9+.-]+);/i.exec(imagenActual.dataUrl) || [];
+  const ext = ({ jpeg: 'jpg', 'svg+xml': 'svg' })[m[1]] || m[1] || 'png';
+  const f = new Date(imagenActual.fecha || Date.now());
+  const marca = `${f.getFullYear()}${String(f.getMonth() + 1).padStart(2, '0')}${String(f.getDate()).padStart(2, '0')}-${String(f.getHours()).padStart(2, '0')}${String(f.getMinutes()).padStart(2, '0')}`;
+  const a = document.createElement('a');
+  a.href = imagenActual.dataUrl;
+  a.download = `imagen-${String(imagenActual.nick).replace(/[^\w-]/g, '')}-${marca}.${ext}`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  mostrarToast('Imagen guardada en tu dispositivo.');
+});
 document.getElementById('btnRetirarImagen').addEventListener('click', () => {
   if (!imagenActual) return;
   socket.emit('eliminarMensaje', { salaId: imagenActual.salaId, mensajeId: imagenActual.id });
@@ -1620,30 +1854,58 @@ socket.on('diagnosticoIP', (d) => {
 });
 
 
-// ================== BLOQUEAR CON MOTIVO (STAFF) ==================
+// ================== BLOQUEAR CON MOTIVO Y DURACIÓN (STAFF) ==================
 const modalBloqueo = document.getElementById('modalBloqueo');
+const pastillasBloqueo = Array.from(document.querySelectorAll('#bloqueoPastillas .pastilla'));
+const btnConfirmarBloqueo = document.getElementById('btnConfirmarBloqueo');
 let bloqueoNick = null;
+let bloqueoHoras = 24;
+let bloqueoSugeridas = null;
+const NOMBRE_HORAS = { 24: '24 horas', 72: '72 horas', 168: '1 semana' };
+
+function elegirHorasBloqueo(horas) {
+  bloqueoHoras = horas;
+  pastillasBloqueo.forEach(b => {
+    const activa = Number(b.dataset.horas) === horas;
+    b.classList.toggle('activa', activa);
+    b.setAttribute('aria-checked', activa ? 'true' : 'false');
+  });
+  btnConfirmarBloqueo.textContent = `Bloquear ${NOMBRE_HORAS[horas]}`;
+}
+function marcarSugerida(horas) {
+  bloqueoSugeridas = horas;
+  pastillasBloqueo.forEach(b => {
+    const base = NOMBRE_HORAS[Number(b.dataset.horas)];
+    b.textContent = Number(b.dataset.horas) === horas ? `★ ${base}` : base;
+  });
+}
+pastillasBloqueo.forEach(b => b.addEventListener('click', () => elegirHorasBloqueo(Number(b.dataset.horas))));
+
 function abrirBloqueo(nick, motivoPorDefecto) {
   bloqueoNick = nick;
   document.getElementById('bloqueoResumen').textContent = `Vas a bloquear a ${nick}. Solo funciona si sigue conectado.`;
-  document.getElementById('bloqueoPrevia').textContent = 'Calculando el nivel del bloqueo…';
+  document.getElementById('bloqueoPrevia').textContent = 'Calculando lo que le corresponde por su historial…';
   document.getElementById('bloqueoMotivo').value = motivoPorDefecto || 'Falta de respeto';
+  marcarSugerida(null);
+  elegirHorasBloqueo(24);
   modalBloqueo.classList.remove('oculto');
   socket.emit('previsualizarBloqueo', { nickObjetivo: nick });
 }
 socket.on('previaBloqueo', (d) => {
   if (d.nick !== bloqueoNick) return;
   document.getElementById('bloqueoPrevia').textContent =
-    `Será el bloqueo nº ${d.previos + 1} de ${d.registrado ? 'esta cuenta (y su IP)' : 'esta IP'}: ${d.duracion}.`;
+    `Por su historial (${d.previos} bloqueo${d.previos === 1 ? '' : 's'} anterior${d.previos === 1 ? '' : 'es'} de ${d.registrado ? 'esta cuenta y su IP' : 'esta IP'}) le corresponde: ${d.duracion}.`;
+  marcarSugerida(d.horas);
+  elegirHorasBloqueo(d.horas);
 });
 document.getElementById('btnCerrarBloqueo').addEventListener('click', () => modalBloqueo.classList.add('oculto'));
 modalBloqueo.addEventListener('click', (e) => { if (e.target === modalBloqueo) modalBloqueo.classList.add('oculto'); });
-document.getElementById('btnConfirmarBloqueo').addEventListener('click', () => {
+btnConfirmarBloqueo.addEventListener('click', () => {
   if (!bloqueoNick) return;
-  socket.emit('banearIP', { nickObjetivo: bloqueoNick, motivo: document.getElementById('bloqueoMotivo').value });
+  socket.emit('banearIP', { nickObjetivo: bloqueoNick, motivo: document.getElementById('bloqueoMotivo').value, horas: bloqueoHoras });
   modalBloqueo.classList.add('oculto');
   modalImagen.classList.add('oculto');
-  mostrarToast(`${bloqueoNick} bloqueado.`);
+  mostrarToast(`${bloqueoNick} bloqueado ${NOMBRE_HORAS[bloqueoHoras]}.`);
   setTimeout(() => socket.emit('pedirBaneados'), 500);
 });
 

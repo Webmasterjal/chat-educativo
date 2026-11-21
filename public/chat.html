@@ -133,10 +133,34 @@
       <main class="zona-chat">
         <div class="pestañas" id="pestañas"></div>
         <div class="barra-privado oculto" id="barraPrivado">
-          <span class="barra-privado-titulo" id="barraPrivadoTitulo"></span>
+          <div class="barra-privado-texto">
+            <span class="barra-privado-titulo" id="barraPrivadoTitulo"></span>
+            <span class="barra-privado-ayuda">📹 Videollamada disponible: solo empieza si los dos aceptáis.</span>
+          </div>
           <div class="barra-privado-botones">
+            <button type="button" id="btnLlamada" class="btn-barra-privado btn-barra-llamada">📹 Videollamada</button>
             <button type="button" id="btnSilenciarPrivado" class="btn-barra-privado">🔊 Silenciar</button>
             <button type="button" id="btnCerrarPrivado" class="btn-barra-privado btn-barra-cerrar">✕ Cerrar chat</button>
+          </div>
+        </div>
+        <div id="invitacionLlamada" class="invitacion-llamada oculto">
+          <span id="invitacionTexto"></span>
+          <div class="barra-privado-botones">
+            <button type="button" id="btnAceptarLlamada" class="btn-barra-privado btn-barra-aceptar">✅ Aceptar</button>
+            <button type="button" id="btnRechazarLlamada" class="btn-barra-privado">Rechazar</button>
+            <button type="button" id="btnCancelarLlamada" class="btn-barra-privado">Cancelar</button>
+          </div>
+        </div>
+        <div id="panelLlamada" class="panel-llamada oculto">
+          <div class="llamada-videos">
+            <video id="videoRemoto" autoplay playsinline></video>
+            <video id="videoLocal" autoplay playsinline muted></video>
+            <div id="llamadaEstado" class="llamada-estado">Conectando…</div>
+          </div>
+          <div class="llamada-controles">
+            <button type="button" id="btnMic" class="llamada-btn" title="Silenciar micrófono" aria-label="Silenciar micrófono">🎤</button>
+            <button type="button" id="btnCam" class="llamada-btn" title="Apagar cámara" aria-label="Apagar cámara">📷</button>
+            <button type="button" id="btnColgar" class="llamada-btn llamada-colgar" title="Colgar" aria-label="Colgar">📞</button>
           </div>
         </div>
         <div class="chat" id="chat"></div>
@@ -252,9 +276,17 @@
             <option>Otro motivo</option>
           </select>
         </div>
+        <div class="campo">
+          <label>Duración del bloqueo</label>
+          <div class="pastillas" id="bloqueoPastillas" role="radiogroup" aria-label="Duración del bloqueo">
+            <button type="button" class="pastilla" role="radio" data-horas="24">24 horas</button>
+            <button type="button" class="pastilla" role="radio" data-horas="72">72 horas</button>
+            <button type="button" class="pastilla" role="radio" data-horas="168">1 semana</button>
+          </div>
+        </div>
         <p id="bloqueoPrevia" class="ayuda"></p>
         <button type="button" id="btnConfirmarBloqueo" class="btn btn-peligro btn-ancho">Bloquear</button>
-        <p class="ayuda">Los bloqueos son temporales y suben con la reincidencia: 24 horas, luego 72 horas y después 7 días. Al resto del chat no se le avisa.</p>
+        <p class="ayuda">Los bloqueos son temporales. La pastilla marcada con ★ es la que corresponde por reincidencia (24 horas, luego 72 horas y después 7 días), pero puedes elegir la que prefieras. Al resto del chat no se le avisa.</p>
       </div>
     </div>
   </div>
@@ -361,6 +393,7 @@
         <p class="ayuda" id="visorInfo"></p>
         <img id="visorImg" alt="Imagen enviada a una sala">
         <div class="visor-acciones">
+          <button type="button" id="btnGuardarImagen" class="btn btn-primario">💾 Guardar imagen</button>
           <button type="button" id="btnRetirarImagen" class="btn btn-fantasma">🗑 Retirar del chat</button>
           <button type="button" id="btnBloquearAutor" class="btn btn-peligro">🚫 Bloquear IP del autor</button>
         </div>

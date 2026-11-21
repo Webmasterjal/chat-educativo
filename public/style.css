@@ -1020,3 +1020,64 @@ body.es-admin .solo-admin { display: block; }
   .dialogo-botones { flex-direction: column-reverse; }
   .dialogo-botones .btn { width: 100%; }
 }
+
+
+/* ================== PASTILLAS DE BLOQUEO ================== */
+.pastillas { display: flex; gap: 8px; flex-wrap: wrap; }
+.pastilla {
+  flex: 1 1 0; min-width: 96px; padding: 12px 14px; border-radius: 999px; cursor: pointer;
+  border: 2px solid var(--borde); background: var(--panel); color: var(--tinta);
+  font-size: 14px; font-weight: 800; white-space: nowrap; transition: transform 0.1s, border-color 0.15s;
+}
+.pastilla:hover { border-color: var(--pri); }
+.pastilla:active { transform: scale(0.97); }
+.pastilla.activa { background: var(--degradado); color: #fff; border-color: transparent; box-shadow: 0 6px 16px rgba(92, 80, 255, 0.35); }
+
+/* ================== VIDEOLLAMADA EN PRIVADOS ================== */
+.barra-privado-texto { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.barra-privado-ayuda { font-size: 11px; color: var(--tinta-suave); }
+.btn-barra-llamada { background: var(--degradado); color: #fff; border-color: transparent; }
+.btn-barra-llamada:disabled { opacity: 0.5; cursor: not-allowed; filter: grayscale(0.4); }
+.btn-barra-aceptar { background: #2f9e44; color: #fff; border-color: transparent; }
+.invitacion-llamada {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+  padding: 10px 16px; background: #fff7e0; color: #5a4300; border-bottom: 1px solid var(--borde);
+  font-size: 13px; font-weight: 700; flex-shrink: 0;
+}
+html[data-tema="oscuro"] .invitacion-llamada { background: #3a2f10; color: #ffe9a8; }
+.panel-llamada { background: #0b0b14; flex-shrink: 0; display: flex; flex-direction: column; }
+.llamada-videos { position: relative; height: clamp(190px, 42dvh, 460px); height: clamp(190px, 42vh, 460px); }
+@supports (height: 1dvh) { .llamada-videos { height: clamp(190px, 42dvh, 460px); } }
+#videoRemoto { width: 100%; height: 100%; object-fit: contain; background: #0b0b14; display: block; }
+#videoLocal {
+  position: absolute; right: 10px; bottom: 10px; width: min(28%, 150px); aspect-ratio: 4 / 3;
+  object-fit: cover; border-radius: 12px; border: 2px solid rgba(255, 255, 255, 0.85);
+  background: #222; transform: scaleX(-1); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+}
+.llamada-estado {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  color: #fff; font-weight: 700; font-size: 15px; background: rgba(11, 11, 20, 0.55); pointer-events: none;
+}
+.llamada-controles { display: flex; justify-content: center; gap: 14px; padding: 10px; background: #14142a; }
+.llamada-btn {
+  width: 48px; height: 48px; border-radius: 50%; border: 0; cursor: pointer; font-size: 21px;
+  background: rgba(255, 255, 255, 0.16); color: #fff; display: flex; align-items: center; justify-content: center;
+}
+.llamada-btn:hover { background: rgba(255, 255, 255, 0.28); }
+.llamada-btn.apagado { background: #e5484d; }
+.llamada-colgar { background: #e5484d; transform: rotate(135deg); }
+.llamada-colgar:hover { background: #cf3338; }
+@media (max-width: 520px) {
+  .invitacion-llamada { padding: 10px 12px; }
+  .invitacion-llamada .barra-privado-botones { width: 100%; }
+  .invitacion-llamada .btn-barra-privado { flex: 1; }
+  #videoLocal { width: 32%; }
+}
+@media (max-height: 480px) {
+  .llamada-videos { height: clamp(90px, 32dvh, 200px); }
+  .llamada-btn { width: 40px; height: 40px; font-size: 18px; }
+  .llamada-controles { padding: 6px; }
+  .barra-privado-ayuda { display: none; }
+}
+
+#modalBloqueo { z-index: 150; } /* por encima del visor de imágenes desde el que se abre */

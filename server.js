@@ -512,10 +512,12 @@ function obtenerIP(socket) {
 }
 
 // Aplica un bloqueo escalado (24 h -> 72 h -> 7 dias) por IP y por cuenta, y avisa solo a la persona y al staff
-async function aplicarBloqueo(socketDestino, nickObjetivo, motivoFinal, baneadoPor) {
+async function aplicarBloqueo(socketDestino, nickObjetivo, motivoFinal, baneadoPor, horasElegidas) {
   const ip = obtenerIP(socketDestino);
   const uClave = socketDestino.data.registrado && socketDestino.data.usuario ? socketDestino.data.usuario.toLowerCase() : null;
-  const { nivel, horas } = await nivelSiguiente(ip, uClave);
+  let { nivel, horas } = await nivelSiguiente(ip, uClave);
+  const idx = DURACIONES_BLOQUEO_HORAS.indexOf(horasElegidas);
+  if (idx >= 0) { horas = horasElegidas; nivel = idx + 1; } // duracion elegida a mano por el staff
   const expira = Date.now() + horas * 60 * 60 * 1000;
   const datos = { expira, motivo: motivoFinal, nivel };
 
@@ -624,6 +626,31 @@ function esGritando(texto) {
   return mayusculas.length / soloLetras.length > 0.8;
 }
 
+// ---- Videollamada en chats privados: el servidor solo reenvia la señalizacion entre las dos personas ----
+const llamadas = new Map(); // canalId -> { a, b, estado: 'solicitada'|'activa', timer }
+function terminarLlamada(canalId, motivo) {
+  const l = llamadas.get(canalId);
+  if (!l) return;
+  clearTimeout(l.timer);
+  llamadas.delete(canalId);
+  [l.a, l.b].forEach(id => {
+    const sk = io.sockets.sockets.get(id);
+    if (!sk) return;
+    if (sk.data.llamadaCanal === canalId) sk.data.llamadaCanal = null;
+    sk.emit('llamadaFin', { canalId, motivo });
+  });
+}
+// STUN publico por defecto. Si algun dia hace falta TURN (redes que bloquean la conexion directa),
+// se activa con las variables de Render TURN_URLS, TURN_USERNAME y TURN_CREDENTIAL.
+function construirIce() {
+  const lista = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }];
+  if (process.env.TURN_URLS) {
+    lista.push({ urls: process.env.TURN_URLS.split(',').map(x => x.trim()).filter(Boolean), username: process.env.TURN_USERNAME || '', credential: process.env.TURN_CREDENTIAL || '' });
+  }
+  return lista;
+}
+const ICE_SERVERS = construirIce();
+
 io.on('connection', (socket) => {
   const ip = obtenerIP(socket);
   const bloqueoIP = bloqueoActivo(ipsBaneadasCache, ip);
@@ -642,6 +669,7 @@ io.on('connection', (socket) => {
   socket.emit('bienvenida', { nick, totalConectados: usuariosConectados.size, salas: listaSalasPara(socket.id) });
   socket.emit('configCuenta', { recuperacion: recuperacion.activo() });
   socket.emit('avatares', mapaAvatares());
+  socket.emit('iceServers', ICE_SERVERS);
   socket.broadcast.emit('sistema', { texto: `${nick} se ha conectado` });
   io.emit('totalConectados', usuariosConectados.size);
 
@@ -1184,15 +1212,15 @@ io.on('connection', (socket) => {
     if (error) { socket.emit('error_app', error); return; }
     const uClave = socketDestino.data.registrado && socketDestino.data.usuario ? socketDestino.data.usuario.toLowerCase() : null;
     const n = await nivelSiguiente(obtenerIP(socketDestino), uClave);
-    socket.emit('previaBloqueo', { nick: nickObjetivo, nivel: n.nivel, duracion: textoDuracion(n.horas), previos: n.previos, registrado: !!uClave });
+    socket.emit('previaBloqueo', { nick: nickObjetivo, nivel: n.nivel, horas: n.horas, duracion: textoDuracion(n.horas), previos: n.previos, registrado: !!uClave });
   });
 
-  socket.on('banearIP', async ({ nickObjetivo, motivo }) => {
+  socket.on('banearIP', async ({ nickObjetivo, motivo, horas }) => {
     if (!esModOAdmin(socket.id)) return;
     const { socketDestino, error } = destinoDeBloqueo(socket, nickObjetivo);
     if (error) { socket.emit('error_app', error); return; }
     const motivoFinal = MOTIVOS_BLOQUEO.includes(motivo) ? motivo : 'Otro motivo';
-    await aplicarBloqueo(socketDestino, nickObjetivo, motivoFinal, usuariosConectados.get(socket.id));
+    await aplicarBloqueo(socketDestino, nickObjetivo, motivoFinal, usuariosConectados.get(socket.id), Number(horas));
   });
 
   // ---- Listado y desbaneo de IPs (admin o moderador) ----
@@ -1314,6 +1342,7 @@ io.on('connection', (socket) => {
   });
 
   function cerrarPrivadoInterno(socketOrigen, canalId, motivo) {
+    terminarLlamada(canalId, 'privado_cerrado');
     const miNickOrigen = usuariosConectados.get(socketOrigen.id);
     let otroNick = null;
     socketOrigen.data.privados.forEach((c, nick) => { if (c === canalId) otroNick = nick; });
@@ -1325,6 +1354,49 @@ io.on('connection', (socket) => {
   }
 
   socket.on('cerrarPrivado', ({ canalId }) => cerrarPrivadoInterno(socket, canalId, 'cerrado'));
+
+  // ---- Videollamada: solo entre las dos personas de un privado y solo si la otra acepta ----
+  function otroDelCanal(canalId) {
+    let nick = null;
+    socket.data.privados.forEach((c, n) => { if (c === canalId) nick = n; });
+    return nick ? socketPorNick(nick) : null;
+  }
+  socket.on('llamadaSolicitar', ({ canalId }) => {
+    if (typeof canalId !== 'string') return;
+    const otro = otroDelCanal(canalId);
+    if (!otro) { socket.emit('error_app', 'La otra persona ya no está conectada.'); return; }
+    if (socket.data.llamadaCanal) { socket.emit('error_app', 'Ya estás en una videollamada.'); return; }
+    if (otro.data.llamadaCanal) { socket.emit('error_app', 'Esa persona está ahora en otra videollamada.'); return; }
+    if (!recuperacion.permitir('llam:' + socket.id, 6, 10 * 60 * 1000)) { socket.emit('error_app', 'Demasiados intentos de videollamada. Espera un poco.'); return; }
+    const l = { a: socket.id, b: otro.id, estado: 'solicitada', timer: setTimeout(() => terminarLlamada(canalId, 'sin_respuesta'), 45 * 1000) };
+    llamadas.set(canalId, l);
+    socket.data.llamadaCanal = canalId;
+    otro.data.llamadaCanal = canalId;
+    otro.emit('llamadaSolicitud', { canalId, de: usuariosConectados.get(socket.id) });
+  });
+  socket.on('llamadaResponder', ({ canalId, aceptar }) => {
+    const l = llamadas.get(canalId);
+    if (!l || l.estado !== 'solicitada' || l.b !== socket.id) return;
+    if (!aceptar) { terminarLlamada(canalId, 'rechazada'); return; }
+    clearTimeout(l.timer);
+    l.estado = 'activa';
+    const quien = io.sockets.sockets.get(l.a);
+    if (quien) quien.emit('llamadaAceptada', { canalId });
+  });
+  socket.on('llamadaSenal', ({ canalId, data }) => {
+    const l = llamadas.get(canalId);
+    if (!l || l.estado !== 'activa' || (socket.id !== l.a && socket.id !== l.b)) return;
+    if (!recuperacion.permitir('senal:' + socket.id, 400, 60 * 1000)) return;
+    let largo = 0;
+    try { largo = JSON.stringify(data || {}).length; } catch (e) { return; }
+    if (largo > 20000) return;
+    const destino = io.sockets.sockets.get(socket.id === l.a ? l.b : l.a);
+    if (destino) destino.emit('llamadaSenal', { canalId, data });
+  });
+  socket.on('llamadaColgar', ({ canalId }) => {
+    const l = llamadas.get(canalId);
+    if (l && (l.a === socket.id || l.b === socket.id)) terminarLlamada(canalId, 'colgada');
+  });
 
   // ---- Reportar mensaje (cualquier usuario) ----
   // ---- Eliminar un mensaje concreto (admin o moderador), dejando constancia ----
@@ -1419,6 +1491,7 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => {
     const nickSaliente = usuariosConectados.get(socket.id);
     socket.data.privados.forEach((canalId, otroNick) => {
+      terminarLlamada(canalId, 'desconexion');
       io.to(canalId).emit('privadoCerrado', { canalId, motivo: 'desconexion', porQuien: nickSaliente });
       const otro = socketPorNick(otroNick);
       if (otro) { otro.leave(canalId); otro.data.privados.delete(nickSaliente); }
