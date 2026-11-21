@@ -217,7 +217,8 @@ body[data-vista="chat"] .acceso { display: none; }
   box-shadow: 0 4px 18px rgba(80, 60, 200, 0.3);
 }
 .cab-izq { display: flex; align-items: center; gap: 10px; }
-.cabecera .marca-punto { background: #fff; box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.3); }
+.marca-icono { width: 30px; height: 30px; flex-shrink: 0; }
+.cabecera .marca-icono { color: #fff; filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.18)); }
 .cabecera-derecha { display: flex; align-items: center; gap: 8px; }
 .cabecera .btn-icono { background: rgba(255, 255, 255, 0.2); color: #fff; }
 .cabecera .btn-icono:hover { background: rgba(255, 255, 255, 0.32); }
@@ -850,7 +851,7 @@ a.btn { text-decoration: none; }
 @media (max-width: 520px) {
   #totalConectados[data-num]::after { content: ''; }
   .estado { padding: 8px 11px; }
-  .cabecera .marca-punto { display: none; }
+  .cabecera .marca-icono { display: none; }
   .cab-izq { gap: 8px; }
   .txt-enviar { display: none; }
   .btn-enviar { width: 42px; padding: 0; }
@@ -985,3 +986,37 @@ body.es-admin .solo-admin { display: block; }
 /* Las ventanas que se abren desde el panel de moderación deben quedar por encima de él */
 #modalBloqueo, #modalImagen { z-index: 105; }
 #bloqueoPrevia { margin-bottom: 14px; font-weight: 700; color: var(--tinta); }
+
+
+/* ================== ICONO DE LA PLAZA, VENTANAS PROPIAS Y FOTOS DE PERFIL ================== */
+.icono-plaza { width: 1.15em; height: 1.15em; vertical-align: -0.2em; color: var(--pri); }
+.modal-dialogo { z-index: 300; }
+.dialogo-cuerpo { padding: 18px 22px 22px; }
+.dialogo-texto { margin: 0 0 14px; font-size: 15px; line-height: 1.5; color: var(--tinta); white-space: pre-line; overflow-wrap: anywhere; }
+.dialogo-input {
+  width: 100%; padding: 12px 14px; border-radius: 14px; border: 2px solid var(--borde);
+  background: var(--panel); color: var(--tinta); font-size: 16px; outline: none; margin-bottom: 14px;
+}
+.dialogo-input:focus { border-color: var(--pri); }
+.dialogo-botones { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; }
+.dialogo-botones .btn { min-width: 110px; }
+.btn-peligro { background: var(--peligro, #e5484d) !important; color: #fff !important; }
+.foto-cuerpo { display: flex; flex-direction: column; align-items: center; gap: 6px; padding-top: 18px; padding-bottom: 22px; }
+.foto-cuerpo .ayuda { text-align: center; margin: 4px 0; }
+.foto-preview {
+  width: 120px; height: 120px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  color: #fff; font-size: 48px; font-weight: 800; box-shadow: var(--sombra); border: 3px solid var(--panel);
+}
+.foto-botones { justify-content: center; margin-top: 8px; }
+.mini-avatar { width: 22px; height: 22px; border-radius: 50%; object-fit: cover; vertical-align: middle; margin-right: 6px; border: 1px solid var(--borde); background: var(--panel); }
+.item-conectado .mini-avatar { width: 20px; height: 20px; margin: 0 6px 0 0; }
+.fila-foto { display: flex; gap: 12px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--borde); }
+.foto-pendiente { width: 84px; height: 84px; border-radius: 14px; object-fit: cover; flex-shrink: 0; border: 1px solid var(--borde); }
+.fila-foto-info { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.fila-foto-info small { color: var(--tinta-suave); }
+.fila-foto-botones { display: flex; gap: 6px; flex-wrap: wrap; }
+.fila-foto-botones button { border: 1px solid var(--borde); background: var(--panel); color: var(--tinta); border-radius: 999px; padding: 6px 12px; font-size: 12px; font-weight: 700; cursor: pointer; }
+@media (max-width: 520px) {
+  .dialogo-botones { flex-direction: column-reverse; }
+  .dialogo-botones .btn { width: 100%; }
+}

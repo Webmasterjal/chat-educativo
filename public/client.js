@@ -47,6 +47,93 @@ const cabeceraBaneados = document.getElementById('cabeceraBaneados');
 const flechaBaneados = document.getElementById('flechaBaneados');
 const listaBaneadosEl = document.getElementById('listaBaneadosEl');
 
+
+// ================== VENTANAS PROPIAS (en lugar de las de Windows/el navegador) ==================
+const dlgFondo = document.getElementById('modalDialogo');
+const dlgTitulo = document.getElementById('dialogoTitulo');
+const dlgTexto = document.getElementById('dialogoTexto');
+const dlgInput = document.getElementById('dialogoInput');
+const dlgOk = document.getElementById('dialogoAceptar');
+const dlgCancel = document.getElementById('dialogoCancelar');
+const dlgCerrar = document.getElementById('dialogoCerrar');
+let dlgCola = Promise.resolve();
+
+function dialogo(op) {
+  const turno = dlgCola.then(() => new Promise((resolver) => {
+    const conInput = !!op.input;
+    dlgTitulo.textContent = op.titulo || 'Aviso';
+    dlgTexto.textContent = op.texto || '';
+    dlgInput.classList.toggle('oculto', !conInput);
+    dlgInput.value = '';
+    if (conInput) { dlgInput.type = op.input.tipo || 'text'; dlgInput.placeholder = op.input.placeholder || ''; }
+    dlgOk.textContent = op.aceptar || 'Aceptar';
+    dlgOk.classList.toggle('btn-peligro', !!op.peligro);
+    dlgCancel.textContent = op.cancelar || 'Cancelar';
+    dlgCancel.classList.toggle('oculto', !op.cancelar);
+    dlgFondo.classList.remove('oculto');
+    (conInput ? dlgInput : dlgOk).focus();
+
+    const cerrar = (valor) => {
+      dlgFondo.classList.add('oculto');
+      dlgOk.removeEventListener('click', ok);
+      dlgCancel.removeEventListener('click', cancelar);
+      dlgCerrar.removeEventListener('click', cancelar);
+      dlgFondo.removeEventListener('mousedown', fondo);
+      document.removeEventListener('keydown', teclas, true);
+      resolver(valor);
+    };
+    const ok = () => cerrar(conInput ? dlgInput.value : true);
+    const cancelar = () => cerrar(conInput ? null : (op.cancelar ? false : true));
+    const fondo = (e) => { if (e.target === dlgFondo) cancelar(); };
+    const teclas = (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cancelar(); }
+      else if (e.key === 'Enter' && document.activeElement !== dlgCancel && document.activeElement !== dlgCerrar) { e.preventDefault(); e.stopPropagation(); ok(); }
+    };
+    dlgOk.addEventListener('click', ok);
+    dlgCancel.addEventListener('click', cancelar);
+    dlgCerrar.addEventListener('click', cancelar);
+    dlgFondo.addEventListener('mousedown', fondo);
+    document.addEventListener('keydown', teclas, true);
+  }));
+  dlgCola = turno.catch(() => {});
+  return turno;
+}
+const avisar = (texto, titulo) => dialogo({ titulo: titulo || 'Aviso', texto });
+const confirmar = (texto, op) => dialogo({ titulo: (op && op.titulo) || 'Confirmar', texto, cancelar: 'Cancelar', aceptar: (op && op.aceptar) || 'Aceptar', peligro: !!(op && op.peligro) });
+const pedirTexto = (texto, op) => dialogo({ titulo: op.titulo, texto, cancelar: 'Cancelar', aceptar: op.aceptar || 'Aceptar', input: { tipo: op.tipo, placeholder: op.placeholder } });
+
+// ================== ICONO DE LA PLAZA (una plaza con fuente) ==================
+const ICONO_PLAZA = '<svg class="icono-plaza" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 26.5h25"/><path d="M6 21.5h20l-2.4 5H8.4z"/><path d="M16 21.5v-6.5"/><path d="M10.5 15h11"/><path d="M16 15V7.5"/><path d="M16 7.5c-3.2 0-5.6 2.2-6.2 5.5"/><path d="M16 7.5c3.2 0 5.6 2.2 6.2 5.5"/></svg>';
+
+// ================== FOTOS DE PERFIL ==================
+const avataresV = {};   // usuarioClave -> versión (solo las aprobadas)
+function urlAvatar(nick) {
+  const k = String(nick || '').toLowerCase();
+  return avataresV[k] ? `/avatar/${encodeURIComponent(k)}?v=${avataresV[k]}` : null;
+}
+function miniAvatarHTML(nick, registrado) {
+  if (registrado === false) return '';
+  const u = urlAvatar(nick);
+  return u ? `<img class="mini-avatar" src="${u}" alt="" loading="lazy">` : '';
+}
+socket.on('avatares', (mapa) => {
+  Object.keys(avataresV).forEach(k => delete avataresV[k]);
+  Object.assign(avataresV, mapa);
+  refrescarAvatares();
+});
+socket.on('avatar', ({ clave, v }) => {
+  if (v) avataresV[clave] = v; else delete avataresV[clave];
+  refrescarAvatares();
+});
+function refrescarAvatares() {
+  if (typeof renderMensajes === 'function' && document.body.dataset.vista === 'chat') {
+    const alFinal = chat.scrollHeight - chat.scrollTop - chat.clientHeight < 40;
+    renderMensajes(alFinal ? undefined : chat.scrollTop);
+    renderListaConectadosSala();
+  }
+  if (typeof sincronizarRolUI === 'function') sincronizarRolUI();
+}
+
 const usuariosPorSala = {}; // salaId -> array de nicks presentes ahora mismo
 const privados = {}; // canalId -> { conNick, mensajes: [], conectado: true, sinLeer: 0 }
 let privadoActivo = null; // canalId del privado que se ve en el centro (o null si se ve una sala)
@@ -261,8 +348,8 @@ function crearBotonReportar(nickReportado, texto) {
   btn.className = 'btn-reportar';
   btn.textContent = '🚩';
   btn.title = 'Reportar este mensaje';
-  btn.addEventListener('click', () => {
-    if (confirm(`¿Reportar este mensaje de ${nickReportado} a los moderadores?`)) {
+  btn.addEventListener('click', async () => {
+    if (await confirmar(`¿Reportar este mensaje de ${nickReportado} a los moderadores?`, { titulo: '🚩 Reportar mensaje', aceptar: 'Reportar' })) {
       socket.emit('reportarMensaje', { salaId: salaActiva, nickReportado, texto });
     }
   });
@@ -274,8 +361,8 @@ function crearBotonEliminar(mensajeId) {
   btn.className = 'btn-reportar btn-eliminar-msg';
   btn.textContent = '🗑';
   btn.title = 'Eliminar este mensaje';
-  btn.addEventListener('click', () => {
-    if (confirm('¿Eliminar este mensaje? Quedará una marca visible de que se borró.')) {
+  btn.addEventListener('click', async () => {
+    if (await confirmar('¿Eliminar este mensaje? Quedará una marca visible de que se borró.', { titulo: '🗑 Eliminar mensaje', aceptar: 'Eliminar', peligro: true })) {
       socket.emit('eliminarMensaje', { salaId: salaActiva, mensajeId });
     }
   });
@@ -330,7 +417,7 @@ function renderMensajes(conservarScrollEn) {
     if (item.eliminadoManual) {
       div.className = 'mensaje' + (item.nick === miNick ? ' propio' : '');
       div.innerHTML = `
-        <div class="nick" style="color:${colorDeNick(item.nick)}">${escapar(item.nick)}</div>
+        <div class="nick" style="color:${colorDeNick(item.nick)}">${miniAvatarHTML(item.nick, item.registrado)}${escapar(item.nick)}</div>
         <p class="imagen-eliminada">[Mensaje eliminado por infringir la norma de respeto]</p>
         <div class="hora">${item.hora}</div>
       `;
@@ -344,7 +431,7 @@ function renderMensajes(conservarScrollEn) {
         ? '<p class="imagen-eliminada">🕒 Imagen eliminada tras 3 minutos</p>'
         : `<img class="imagen-chat" src="${item.imagenDataUrl}" alt="Imagen enviada por ${escapar(item.nick)}">`;
       div.innerHTML = `
-        <div class="nick" style="color:${colorDeNick(item.nick)}">${escapar(item.nick)}</div>
+        <div class="nick" style="color:${colorDeNick(item.nick)}">${miniAvatarHTML(item.nick, item.registrado)}${escapar(item.nick)}</div>
         ${citaHTML(item)}
         ${cuerpoImg}
         <div class="hora">${item.hora}</div>
@@ -355,7 +442,7 @@ function renderMensajes(conservarScrollEn) {
     } else {
       div.className = 'mensaje' + (item.nick === miNick ? ' propio' : '');
       div.innerHTML = `
-        <div class="nick" style="color:${colorDeNick(item.nick)}">${escapar(item.nick)}</div>
+        <div class="nick" style="color:${colorDeNick(item.nick)}">${miniAvatarHTML(item.nick, item.registrado)}${escapar(item.nick)}</div>
         ${citaHTML(item)}
         <div class="texto">${resaltarMenciones(item.texto)}</div>
         <div class="hora">${item.hora}</div>
@@ -392,7 +479,7 @@ function renderListaConectadosSala() {
     const bocadillo = escribiendoAhora
       ? '<span class="bocadillo-escribiendo"><span></span><span></span><span></span></span>'
       : '';
-    div.innerHTML = `<span class="punto-conexion online"></span><span style="color:${colorDeNick(n)}">${escapar(n)}</span>${bocadillo}`;
+    div.innerHTML = `<span class="punto-conexion online"></span>${miniAvatarHTML(n)}<span style="color:${colorDeNick(n)}">${escapar(n)}</span>${bocadillo}`;
     if (n !== miNick) {
       div.addEventListener('click', () => socket.emit('abrirPrivado', { nickObjetivo: n }));
     } else {
@@ -413,7 +500,7 @@ function renderListaSalas() {
     const div = document.createElement('div');
     div.className = 'item-sala' + (s.id === salaActiva && !privadoActivo && unido ? ' activa' : '');
     div.style.setProperty('--c', colorDeSala(s.id));
-    const icono = s.fija ? '🏛️ ' : ((s.permanente && s.id !== 'staff') ? '📌 ' : '');
+    const icono = s.fija ? ICONO_PLAZA + ' ' : ((s.permanente && s.id !== 'staff') ? '📌 ' : '');
     div.innerHTML = `
       <span>${icono}${escapar(s.nombre)} <small>(${s.numUsuarios})</small></span>
     `;
@@ -448,8 +535,8 @@ function renderListaSalas() {
       btnBorrar.textContent = '🗑';
       btnBorrar.className = 'btn-borrar-sala';
       btnBorrar.title = esPrivilegiado() ? 'Eliminar sala' : 'Cerrar tu sala';
-      btnBorrar.addEventListener('click', () => {
-        if (confirm(`¿Cerrar la sala "${s.nombre}"?`)) socket.emit('eliminarSala', { salaId: s.id });
+      btnBorrar.addEventListener('click', async () => {
+        if (await confirmar(`¿Cerrar la sala "${s.nombre}"?`, { titulo: 'Cerrar sala', aceptar: 'Cerrar sala', peligro: true })) socket.emit('eliminarSala', { salaId: s.id });
       });
       div.appendChild(btnBorrar);
     }
@@ -619,7 +706,7 @@ socket.on('estasBaneado', ({ adminOnline, modsOnline, motivo, hasta, nivel }) =>
     }
   });
 });
-socket.on('avisoOk', (texto) => alert(texto));
+socket.on('avisoOk', (texto) => avisar(texto));
 
 socket.on('rolAsignado', ({ rol }) => {
   miRol = rol;
@@ -653,8 +740,8 @@ socket.on('listaBaneados', (baneados) => {
     `;
     const btn = document.createElement('button');
     btn.textContent = 'Desbanear';
-    btn.addEventListener('click', () => {
-      if (confirm(`¿Desbloquear a ${b.nick}? Podrá volver a entrar al chat y este bloqueo no contará como reincidencia.`)) {
+    btn.addEventListener('click', async () => {
+      if (await confirmar(`¿Desbloquear a ${b.nick}? Podrá volver a entrar al chat y este bloqueo no contará como reincidencia.`, { titulo: 'Desbloquear', aceptar: 'Desbloquear' })) {
         socket.emit('desbanearIP', { ip: b.ip });
       }
     });
@@ -725,6 +812,7 @@ socket.on('sesionCerrada', ({ nick }) => {
   salasUnidas.clear();
   salaActiva = null;
   privadoActivo = null;
+  estadoFoto = { tiene: false, v: null, pendiente: null, rechazada: null };
   Object.keys(privados).forEach(k => delete privados[k]);
   Object.keys(mensajesPorSala).forEach(k => delete mensajesPorSala[k]);
   cuentaAnonima.classList.remove('oculto');
@@ -793,8 +881,8 @@ formCrearSala.addEventListener('submit', (e) => {
   nombreSalaInput.value = '';
 });
 
-btnAdmin.addEventListener('click', () => {
-  const clave = prompt('Introduce la clave de administrador:');
+btnAdmin.addEventListener('click', async () => {
+  const clave = await pedirTexto('Introduce la clave de administrador.', { titulo: '👑 Acceder como administrador', tipo: 'password', placeholder: 'Clave de administrador', aceptar: 'Entrar' });
   if (clave) socket.emit('reclamarAdmin', { clave });
 });
 
@@ -841,7 +929,7 @@ btnAsignarMod.addEventListener('click', () => {
 btnCrearMod.addEventListener('click', () => {
   const usuario = usuarioNuevoModInput.value.trim();
   const contrasena = contrasenaNuevoModInput.value;
-  if (!usuario || !contrasena) { alert('Rellena el usuario y la contrasena.'); return; }
+  if (!usuario || !contrasena) { avisar('Rellena el usuario y la contraseña.'); return; }
   socket.emit('crearCuentaModerador', { usuario, contrasena });
   usuarioNuevoModInput.value = '';
   contrasenaNuevoModInput.value = '';
@@ -850,7 +938,7 @@ btnCrearMod.addEventListener('click', () => {
 btnResetPass.addEventListener('click', () => {
   const usuario = usuarioResetInput.value.trim();
   const nuevaContrasena = nuevaContrasenaInput.value;
-  if (!usuario || !nuevaContrasena) { alert('Rellena el usuario y la nueva contrasena.'); return; }
+  if (!usuario || !nuevaContrasena) { avisar('Rellena el usuario y la nueva contraseña.'); return; }
   socket.emit('restablecerContrasena', { usuario, nuevaContrasena });
   usuarioResetInput.value = '';
   nuevaContrasenaInput.value = '';
@@ -873,19 +961,19 @@ btnIniciarSesion.addEventListener('click', () => {
   socket.emit('iniciarSesion', { usuario, contrasena });
 });
 
-document.getElementById('btnCerrarSesion').addEventListener('click', () => {
-  if (confirm('¿Cerrar tu sesión?')) socket.emit('cerrarSesion');
+document.getElementById('btnCerrarSesion').addEventListener('click', async () => {
+  if (await confirmar('¿Quieres cerrar tu sesión?', { titulo: '🚪 Salir', aceptar: 'Salir' })) socket.emit('cerrarSesion');
 });
 
 // ---- Subida de imagenes (fotos y GIFs desde el propio dispositivo) ----
 function manejarArchivoSeleccionado(file, destino) {
-  if (!file.type.startsWith('image/')) { alert('Solo se permiten imagenes (foto en cualquier formato) o GIFs.'); return; }
-  if (file.size > 4 * 1024 * 1024) { alert('La imagen pesa demasiado (maximo 4MB).'); return; }
+  if (!file.type.startsWith('image/')) { avisar('Solo se permiten imágenes (foto en cualquier formato) o GIFs.'); return; }
+  if (file.size > 4 * 1024 * 1024) { avisar('La imagen pesa demasiado (máximo 4 MB).'); return; }
   const lector = new FileReader();
   lector.onload = () => {
     const dataUrl = lector.result;
     if (destino.tipo === 'sala') {
-      if (!salaActiva) { alert('Entra en una sala antes de enviar una imagen.'); return; }
+      if (!salaActiva) { avisar('Entra en una sala antes de enviar una imagen.'); return; }
       socket.emit('mensajeSala', { salaId: salaActiva, imagenDataUrl: dataUrl, imagenNombre: file.name });
     } else {
       socket.emit('imagenPrivada', { canalId: destino.canalId, imagenDataUrl: dataUrl, imagenNombre: file.name });
@@ -1045,6 +1133,109 @@ socket.on('privadoCerrado', ({ canalId, motivo }) => {
 });
 
 
+
+// ---- Mi foto de perfil (se guarda en la cuenta; la revisa el administrador antes de que se vea) ----
+const modalFoto = document.getElementById('modalFoto');
+const fotoPreview = document.getElementById('fotoPreview');
+const fotoEstadoEl = document.getElementById('fotoEstado');
+const inputFoto = document.getElementById('inputFoto');
+const btnElegirFoto = document.getElementById('btnElegirFoto');
+const btnEnviarFoto = document.getElementById('btnEnviarFoto');
+const btnQuitarFoto = document.getElementById('btnQuitarFoto');
+let estadoFoto = { tiene: false, v: null, pendiente: null, rechazada: null };
+let fotoElegida = null;
+
+socket.on('avatarEstado', (e) => { estadoFoto = e || estadoFoto; pintarModalFoto(); });
+
+function pintarModalFoto() {
+  const mostrar = fotoElegida || estadoFoto.pendiente || (estadoFoto.tiene ? urlAvatar(miNick) : null);
+  if (mostrar) {
+    fotoPreview.textContent = '';
+    fotoPreview.style.background = `center / cover no-repeat url("${mostrar}")`;
+  } else {
+    fotoPreview.textContent = (miNick || '?').charAt(0).toUpperCase();
+    fotoPreview.style.background = colorDeNick(miNick || '?');
+  }
+  let msg;
+  if (fotoElegida) msg = 'Así se verá tu foto. Pulsa «Enviar para revisión» para confirmarla.';
+  else if (estadoFoto.pendiente) msg = '⏳ Tu foto está pendiente de revisión por el administrador. Hasta que la apruebe no se ve en el chat.';
+  else if (estadoFoto.rechazada) msg = '❌ ' + estadoFoto.rechazada;
+  else if (estadoFoto.tiene) msg = '✅ Tu foto está aprobada y aparece junto a tu nombre. Se guarda en tu cuenta: no tienes que subirla cada vez que entras.';
+  else msg = 'Aún no tienes foto. Elige una imagen y la revisará el administrador antes de que se vea.';
+  fotoEstadoEl.textContent = msg;
+  btnEnviarFoto.classList.toggle('oculto', !fotoElegida);
+  btnQuitarFoto.classList.toggle('oculto', !(estadoFoto.tiene || estadoFoto.pendiente) || !!fotoElegida);
+}
+
+// Reduce la imagen elegida a un cuadrado pequeño (160 px) para que pese poco
+function reducirFoto(file) {
+  return new Promise((resolver, rechazar) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const lado = Math.min(img.width, img.height);
+      const c = document.createElement('canvas');
+      c.width = c.height = 160;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, 160, 160);
+      ctx.drawImage(img, (img.width - lado) / 2, (img.height - lado) / 2, lado, lado, 0, 0, 160, 160);
+      URL.revokeObjectURL(url);
+      resolver(c.toDataURL('image/jpeg', 0.82));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); rechazar(new Error('imagen')); };
+    img.src = url;
+  });
+}
+
+document.getElementById('btnFoto').addEventListener('click', () => {
+  menuUsuario.classList.add('oculto');
+  fotoElegida = null;
+  pintarModalFoto();
+  modalFoto.classList.remove('oculto');
+});
+document.getElementById('btnCerrarFoto').addEventListener('click', () => { modalFoto.classList.add('oculto'); fotoElegida = null; });
+modalFoto.addEventListener('mousedown', (e) => { if (e.target === modalFoto) { modalFoto.classList.add('oculto'); fotoElegida = null; } });
+btnElegirFoto.addEventListener('click', () => inputFoto.click());
+inputFoto.addEventListener('change', async () => {
+  const f = inputFoto.files[0];
+  inputFoto.value = '';
+  if (!f) return;
+  if (!f.type.startsWith('image/')) { avisar('Elige un archivo de imagen (JPG, PNG, WebP…).'); return; }
+  try { fotoElegida = await reducirFoto(f); } catch (e) { avisar('No se ha podido leer esa imagen. Prueba con otra.'); return; }
+  pintarModalFoto();
+});
+btnEnviarFoto.addEventListener('click', () => {
+  if (!fotoElegida) return;
+  socket.emit('subirAvatar', { dataUrl: fotoElegida });
+  fotoElegida = null;
+  modalFoto.classList.add('oculto');
+  mostrarToast(miRol === 'admin' ? 'Tu foto ya está activa.' : 'Foto enviada. El administrador la revisará antes de que se vea.');
+});
+btnQuitarFoto.addEventListener('click', async () => {
+  if (await confirmar('¿Quitar tu foto de perfil?', { titulo: 'Quitar foto', aceptar: 'Quitar', peligro: true })) socket.emit('quitarAvatar');
+});
+
+// ---- Fotos pendientes (solo el administrador) ----
+const listaFotos = document.getElementById('listaFotos');
+const contadorFotos = document.getElementById('contadorFotos');
+socket.on('avataresPendientesN', (n) => { contadorFotos.textContent = n ? `(${n})` : ''; });
+socket.on('avataresPendientes', (lista) => {
+  contadorFotos.textContent = lista.length ? `(${lista.length})` : '';
+  listaFotos.innerHTML = lista.length
+    ? lista.map(f => `<div class="fila-foto"><img class="foto-pendiente" src="${f.data}" alt="Foto de ${escapar(f.usuario)}">` +
+        `<div class="fila-foto-info"><strong>${escapar(f.usuario)}</strong><small>${tiempoRelativo(new Date(f.fecha).getTime())}</small>` +
+        `<div class="fila-foto-botones"><button type="button" class="btn-aprobar-foto" data-u="${escapar(f.usuario)}">✅ Aprobar</button>` +
+        `<button type="button" class="btn-rechazar-foto" data-u="${escapar(f.usuario)}">❌ Rechazar</button></div></div></div>`).join('')
+    : '<p class="ayuda">No hay fotos pendientes de revisar.</p>';
+});
+listaFotos.addEventListener('click', (e) => {
+  const a = e.target.closest('.btn-aprobar-foto');
+  const r = e.target.closest('.btn-rechazar-foto');
+  if (a) socket.emit('resolverAvatar', { usuario: a.dataset.u, aprobar: true });
+  if (r) socket.emit('resolverAvatar', { usuario: r.dataset.u, aprobar: false });
+});
+
 // ================== PANTALLAS: ACCESO / CHAT ==================
 const tabLogin = document.getElementById('tabLogin');
 const tabRegistro = document.getElementById('tabRegistro');
@@ -1080,7 +1271,7 @@ function avisarError(texto) {
   if (document.body.dataset.vista === 'acceso') avisarAcceso(texto);
   else if (!modalCorreo.classList.contains('oculto')) { avisoCorreo.textContent = texto; avisoCorreo.classList.remove('ok'); }
   else if (!modalEliminar.classList.contains('oculto')) { avisoEliminar.textContent = texto; }
-  else alert(texto);
+  else avisar(texto, 'Algo no ha ido bien');
 }
 
 function fijarModo(modo, conservarAviso) {
@@ -1113,10 +1304,16 @@ function sincronizarRolUI() {
   const nombre = miNick || '…';
   const inicial = nombre.charAt(0).toUpperCase();
   const color = miNick ? colorDeNick(miNick) : '#6D4AFF';
+  const miFoto = miNick && document.body.classList.contains('es-registrado') ? urlAvatar(miNick) : null;
   ['avatarInicial', 'menuAvatar'].forEach(id => {
     const el = document.getElementById(id);
-    el.textContent = inicial;
-    el.style.background = color;
+    if (miFoto) {
+      el.textContent = '';
+      el.style.background = `center / cover no-repeat url("${miFoto}")`;
+    } else {
+      el.textContent = inicial;
+      el.style.background = color;
+    }
   });
   document.getElementById('chipNick').textContent = nombre;
   document.getElementById('menuNick').textContent = nombre;
@@ -1208,12 +1405,14 @@ document.getElementById('btnPanelMod').addEventListener('click', () => {
   socket.emit('pedirUsuarios');
   socket.emit('pedirEquipo');
   socket.emit('pedirImagenes');
+  if (miRol === 'admin') socket.emit('pedirAvataresPendientes');
   clearInterval(intervaloEquipo);
   // Mientras el panel está abierto, la lista se refresca sola cada pocos segundos
   intervaloEquipo = setInterval(() => {
     if (modalMod.classList.contains('oculto')) { clearInterval(intervaloEquipo); return; }
     socket.emit('pedirEquipo');
     socket.emit('pedirImagenes');
+    if (miRol === 'admin') socket.emit('pedirAvataresPendientes');
   }, 8000);
 });
 

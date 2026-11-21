@@ -29,6 +29,26 @@ app.use((req, res, next) => {
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json());
 
+// ---- Fotos de perfil aprobadas (solo las autorizadas por el administrador se sirven aqui) ----
+const avataresCache = new Map(); // usuarioClave -> { buf, mime, v }
+function dataUrlABuffer(dataUrl) {
+  const m = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(String(dataUrl || ''));
+  if (!m) return null;
+  const buf = Buffer.from(m[2], 'base64');
+  const esJpg = buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF;
+  const esPng = buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47;
+  const esWebp = buf.slice(0, 4).toString() === 'RIFF' && buf.slice(8, 12).toString() === 'WEBP';
+  if (!(esJpg || esPng || esWebp)) return null;
+  return { buf, mime: m[1] };
+}
+app.get('/avatar/:clave', (req, res) => {
+  const a = avataresCache.get(String(req.params.clave || '').toLowerCase());
+  if (!a) return res.status(404).end();
+  res.set('Content-Type', a.mime);
+  res.set('Cache-Control', 'public, max-age=31536000, immutable');
+  res.send(a.buf);
+});
+
 // La IP real llega en CF-Connecting-IP (Cloudflare la escribe y no se puede falsificar a través de él).
 // Si no viniera, se usa X-Forwarded-For como hasta ahora.
 function ipDeCabeceras(headers, directa) {
@@ -103,6 +123,7 @@ function generarNick() {
 let usuariosCol = null;
 let notasStaffCol = null;
 let salasFijasCol = null;
+const MAX_AVATAR_BASE64 = 90 * 1024;
 let estadisticasCol = null;
 let tokensCuentaCol = null;
 
@@ -146,6 +167,7 @@ async function conectarDB() {
   await tokensCuentaCol.createIndex({ hash: 1 });
   await cargarBaneados();
   await cargarSalasFijas();
+  await cargarAvatares();
   console.log('Conectado a la base de datos correctamente');
 }
 
@@ -169,6 +191,22 @@ const moderadores = new Set();        // socketId
 
 function esModOAdmin(socketId) {
   return socketId === adminSocketId || moderadores.has(socketId);
+}
+
+async function cargarAvatares() {
+  if (!usuariosCol) return;
+  try {
+    const docs = await usuariosCol.find({ avatar: { $exists: true } }).toArray();
+    docs.forEach(d => {
+      const r = d.avatar && dataUrlABuffer(d.avatar.data);
+      if (r) avataresCache.set(d.usuarioClave, { ...r, v: d.avatar.v || 1 });
+    });
+  } catch (e) { console.log('No se pudieron cargar las fotos de perfil:', e.message); }
+}
+function mapaAvatares() {
+  const o = {};
+  avataresCache.forEach((a, k) => { o[k] = a.v; });
+  return o;
 }
 
 // ---- Salas fijas: sobreviven a reinicios porque se guardan en la base de datos ----
@@ -473,6 +511,32 @@ function obtenerIP(socket) {
   return ipDeCabeceras(socket.handshake.headers, socket.handshake.address);
 }
 
+// Aplica un bloqueo escalado (24 h -> 72 h -> 7 dias) por IP y por cuenta, y avisa solo a la persona y al staff
+async function aplicarBloqueo(socketDestino, nickObjetivo, motivoFinal, baneadoPor) {
+  const ip = obtenerIP(socketDestino);
+  const uClave = socketDestino.data.registrado && socketDestino.data.usuario ? socketDestino.data.usuario.toLowerCase() : null;
+  const { nivel, horas } = await nivelSiguiente(ip, uClave);
+  const expira = Date.now() + horas * 60 * 60 * 1000;
+  const datos = { expira, motivo: motivoFinal, nivel };
+
+  ipsBaneadasCache.set(ip, datos);
+  if (uClave) cuentasBaneadasCache.set(uClave, datos);
+  if (baneadosCol) {
+    await baneadosCol.updateOne({ ip }, { $set: {
+      nick: nickObjetivo, usuarioClave: uClave, motivo: motivoFinal, nivel, horas, baneadoPor,
+      fecha: new Date(), expira: new Date(expira), mensajesApelacion: []
+    } }, { upsert: true });
+  }
+  await sumarBloqueo(ip, uClave, +1);
+
+  // El aviso con el motivo lo ve SOLO la persona bloqueada; al resto del chat no se le anuncia nada.
+  socketDestino.emit('estasBaneado', avisoBloqueo(datos));
+  socketDestino.disconnect(true);
+  [adminSocketId, ...moderadores].filter(Boolean).forEach(id =>
+    io.to(id).emit('sistema', { texto: `🚫 ${nickObjetivo} bloqueado ${textoDuracion(horas)} (nivel ${nivel}) · ${motivoFinal} · por ${baneadoPor}` }));
+  return { nivel, horas };
+}
+
 // ---- Bot moderador (aparece como un nick cualquiera, no revela que es automatico) ----
 const NICK_BOT = generarNick();
 const infraccionesPorSocket = new Map(); // socket.id -> array de timestamps de infracciones
@@ -511,6 +575,44 @@ async function registrarInfraccionYComprobarEscalado(socket, ip, nick) {
   return false;
 }
 
+// ---- Mensajes repetidos: no se permite repetir el mismo texto (seguido ni pasado un rato) ----
+const REPETICION_VENTANA_MS = 5 * 60 * 1000;   // mismo mensaje dentro de estos minutos = repeticion
+const REPETICION_AVISO_VALIDO_MS = 60 * 60 * 1000; // el aviso previo vale 1 hora; si repite despues de avisar, se bloquea
+const historialTextos = new Map();   // clave de persona -> [{ n, t }]
+const avisosRepeticion = new Map();  // clave de persona -> momento del aviso
+
+function normalizarTexto(t) {
+  return String(t).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ').replace(/(.)\1{2,}/g, '$1$1').trim();
+}
+function claveDePersona(socket) {
+  return socket.data.registrado && socket.data.usuario ? 'u:' + socket.data.usuario.toLowerCase() : 'ip:' + obtenerIP(socket);
+}
+// Devuelve true si el mensaje es una repeticion (sin guardarlo). Si no lo es, lo recuerda.
+function esRepeticion(socket, texto) {
+  const n = normalizarTexto(texto);
+  if (n.length < 4) return false; // "ok", "si", emojis sueltos... no cuentan
+  const clave = claveDePersona(socket);
+  const ahora = Date.now();
+  const lista = (historialTextos.get(clave) || []).filter(x => ahora - x.t < REPETICION_VENTANA_MS);
+  const repetido = lista.some(x => x.n === n);
+  if (!repetido) { lista.push({ n, t: ahora }); if (lista.length > 20) lista.shift(); }
+  historialTextos.set(clave, lista);
+  return repetido;
+}
+// Quien "habla" en el aviso automatico: el administrador si esta, si no un moderador, si no el bot
+function emisorAutomatico() {
+  if (adminSocketId && usuariosConectados.get(adminSocketId)) return { nick: usuariosConectados.get(adminSocketId), rol: 'admin', registrado: true };
+  const idMod = Array.from(moderadores).find(id => usuariosConectados.get(id));
+  if (idMod) return { nick: usuariosConectados.get(idMod), rol: 'moderador', registrado: true };
+  return { nick: NICK_BOT, rol: 'usuario', registrado: false };
+}
+setInterval(() => {
+  const ahora = Date.now();
+  historialTextos.forEach((l, k) => { if (!l.some(x => ahora - x.t < REPETICION_VENTANA_MS)) historialTextos.delete(k); });
+  avisosRepeticion.forEach((t, k) => { if (ahora - t > REPETICION_AVISO_VALIDO_MS) avisosRepeticion.delete(k); });
+}, 60 * 1000).unref();
+
 // ---- Deteccion de "gritar" en mayusculas ----
 const BLOQUEO_MAYUS_MS = 60 * 1000;
 const bloqueadosPorMayus = new Map(); // socket.id -> timestamp hasta el que esta bloqueado
@@ -539,6 +641,7 @@ io.on('connection', (socket) => {
 
   socket.emit('bienvenida', { nick, totalConectados: usuariosConectados.size, salas: listaSalasPara(socket.id) });
   socket.emit('configCuenta', { recuperacion: recuperacion.activo() });
+  socket.emit('avatares', mapaAvatares());
   socket.broadcast.emit('sistema', { texto: `${nick} se ha conectado` });
   io.emit('totalConectados', usuariosConectados.size);
 
@@ -654,6 +757,7 @@ io.on('connection', (socket) => {
     if (doc.rol === 'admin') { socket.emit('error_app', 'La cuenta de administrador no se puede eliminar desde aquí.'); return; }
 
     await usuariosCol.deleteOne({ usuarioClave: uClave });
+    if (avataresCache.delete(uClave)) io.emit('avatar', { clave: uClave, v: null });
     if (tokensCuentaCol) await tokensCuentaCol.deleteMany({ usuarioClave: uClave });
     if (notasStaffCol) await notasStaffCol.deleteMany({ nick: doc.usuario });
     if (estadisticasCol) estadisticasCol.updateOne({ _id: 'global' }, { $unset: { [`porUsuario.${doc.usuario}`]: '' } }).catch(() => {});
@@ -662,6 +766,68 @@ io.on('connection', (socket) => {
     hacerCerrarSesion();
     socket.emit('cuentaEliminada');
   });
+
+  // ---- Foto de perfil: la sube la persona y NO se ve hasta que la aprueba el administrador ----
+  socket.on('subirAvatar', async ({ dataUrl }) => {
+    if (!usuariosCol || !socket.data.registrado || !socket.data.usuario) { socket.emit('error_app', 'Para poner una foto necesitas una cuenta (los invitados no pueden).'); return; }
+    const uClave = socket.data.usuario.toLowerCase();
+    if (!recuperacion.permitir('avatar:' + uClave, 6, 60 * 60 * 1000)) { socket.emit('error_app', 'Demasiados cambios de foto. Inténtalo más tarde.'); return; }
+    if (typeof dataUrl !== 'string' || dataUrl.length > MAX_AVATAR_BASE64 || !dataUrlABuffer(dataUrl)) { socket.emit('error_app', 'La foto no es válida. Usa una imagen JPG, PNG o WebP pequeña.'); return; }
+    const esAdmin = socket.id === adminSocketId;
+    if (esAdmin) {
+      // El administrador es quien revisa: su propia foto queda aprobada directamente
+      await aprobarAvatar(uClave, socket.data.usuario, dataUrl);
+    } else {
+      await usuariosCol.updateOne({ usuarioClave: uClave }, { $set: { avatarPendiente: { data: dataUrl, fecha: new Date() } }, $unset: { avatarRechazada: '' } });
+      if (adminSocketId) io.to(adminSocketId).emit('sistema', { texto: `🖼️ ${socket.data.usuario} ha enviado una foto de perfil. Revísala en el Panel de moderación.` });
+      avisarPendientesAdmin().catch(() => {});
+    }
+    await enviarEstadoAvatarATodosSusSockets(uClave);
+  });
+
+  socket.on('quitarAvatar', async () => {
+    if (!usuariosCol || !socket.data.registrado || !socket.data.usuario) return;
+    const uClave = socket.data.usuario.toLowerCase();
+    await usuariosCol.updateOne({ usuarioClave: uClave }, { $unset: { avatar: '', avatarPendiente: '', avatarRechazada: '' } });
+    if (avataresCache.delete(uClave)) io.emit('avatar', { clave: uClave, v: null });
+    await enviarEstadoAvatarATodosSusSockets(uClave);
+    avisarPendientesAdmin().catch(() => {});
+  });
+
+  socket.on('pedirAvataresPendientes', async () => {
+    if (socket.id !== adminSocketId || !usuariosCol) return;
+    const docs = await usuariosCol.find({ avatarPendiente: { $exists: true } }).sort({ _id: 1 }).limit(30).toArray();
+    socket.emit('avataresPendientes', docs.map(d => ({ usuario: d.usuario, data: d.avatarPendiente.data, fecha: d.avatarPendiente.fecha })));
+  });
+
+  socket.on('resolverAvatar', async ({ usuario, aprobar }) => {
+    if (socket.id !== adminSocketId || !usuariosCol) return;
+    const uClave = String(usuario || '').toLowerCase();
+    const doc = await usuariosCol.findOne({ usuarioClave: uClave });
+    if (!doc || !doc.avatarPendiente) { socket.emit('error_app', 'Esa foto ya no está pendiente.'); return; }
+    if (aprobar) await aprobarAvatar(uClave, doc.usuario, doc.avatarPendiente.data);
+    else await usuariosCol.updateOne({ usuarioClave: uClave }, { $unset: { avatarPendiente: '' }, $set: { avatarRechazada: 'La foto no cumple las normas del chat. Puedes probar con otra.' } });
+    await enviarEstadoAvatarATodosSusSockets(uClave);
+    const pend = await usuariosCol.find({ avatarPendiente: { $exists: true } }).sort({ _id: 1 }).limit(30).toArray();
+    socket.emit('avataresPendientes', pend.map(d => ({ usuario: d.usuario, data: d.avatarPendiente.data, fecha: d.avatarPendiente.fecha })));
+    avisarPendientesAdmin().catch(() => {});
+  });
+
+  async function aprobarAvatar(uClave, nombre, dataUrl) {
+    const r = dataUrlABuffer(dataUrl);
+    if (!r) return;
+    const v = Date.now();
+    await usuariosCol.updateOne({ usuarioClave: uClave }, { $set: { avatar: { data: dataUrl, v } }, $unset: { avatarPendiente: '', avatarRechazada: '' } });
+    avataresCache.set(uClave, { ...r, v });
+    io.emit('avatar', { clave: uClave, v });
+  }
+  async function enviarEstadoAvatarATodosSusSockets(uClave) {
+    for (const [id, nombre] of usuariosConectados.entries()) {
+      if (String(nombre).toLowerCase() !== uClave) continue;
+      const sk = io.sockets.sockets.get(id);
+      if (sk && sk.data.registrado) await enviarEstadoAvatar(sk);
+    }
+  }
 
   // ---- Añadir o cambiar el correo de recuperación (hay que repetir la contraseña) ----
   socket.on('guardarCorreo', async ({ email, contrasena }) => {
@@ -681,6 +847,22 @@ io.on('connection', (socket) => {
     socket.emit('correoGuardado', { enviado });
   });
 
+  async function enviarEstadoAvatar(sk) {
+    if (!usuariosCol || !sk.data.usuario) return;
+    const doc = await usuariosCol.findOne({ usuarioClave: sk.data.usuario.toLowerCase() });
+    if (!doc) return;
+    sk.emit('avatarEstado', {
+      tiene: !!doc.avatar, v: doc.avatar ? doc.avatar.v : null,
+      pendiente: doc.avatarPendiente ? doc.avatarPendiente.data : null,
+      rechazada: doc.avatarRechazada || null
+    });
+  }
+  async function avisarPendientesAdmin() {
+    if (!adminSocketId || !usuariosCol) return;
+    const n = await usuariosCol.countDocuments({ avatarPendiente: { $exists: true } });
+    io.to(adminSocketId).emit('avataresPendientesN', n);
+  }
+
   function aplicarSesion(socket, usuario, rol) {
     usuariosConectados.set(socket.id, usuario);
     socket.data.registrado = true;
@@ -688,6 +870,8 @@ io.on('connection', (socket) => {
     if (rol === 'admin') adminSocketId = socket.id;
     if (rol === 'moderador') moderadores.add(socket.id);
     if (rol === 'admin' || rol === 'moderador') unirStaffATodas(socket);
+    enviarEstadoAvatar(socket).catch(() => {});
+    if (rol === 'admin') avisarPendientesAdmin().catch(() => {});
     io.emit('totalConectados', usuariosConectados.size);
     emitirSalasATodos();
   }
@@ -753,7 +937,7 @@ io.on('connection', (socket) => {
   });
 
   // ---- Mensaje en una sala ----
-  socket.on('mensajeSala', ({ salaId, texto, imagenDataUrl, imagenNombre, respuestaAId }) => {
+  socket.on('mensajeSala', async ({ salaId, texto, imagenDataUrl, imagenNombre, respuestaAId }) => {
     const sala = salas.get(salaId);
     if (!sala) return;
     const privilegiado = esModOAdmin(socket.id);
@@ -813,6 +997,27 @@ io.on('connection', (socket) => {
 
     let textoLimpio = String(texto || '').trim().slice(0, 400);
     if (!textoLimpio) return;
+
+    // Repeticiones (el staff queda fuera de esta norma)
+    if (!privilegiado && esRepeticion(socket, textoLimpio)) {
+      const clave = claveDePersona(socket);
+      const avisadoEn = avisosRepeticion.get(clave);
+      const emisor = emisorAutomatico();
+      if (avisadoEn && Date.now() - avisadoEn < REPETICION_AVISO_VALIDO_MS) {
+        avisosRepeticion.delete(clave);
+        await aplicarBloqueo(socket, nick, 'Spam o publicidad', emisor.rol === 'usuario' ? NICK_BOT + ' (automatico)' : emisor.nick + ' (automatico)');
+        return;
+      }
+      avisosRepeticion.set(clave, Date.now());
+      socket.emit('error_app', 'No se permite repetir el mismo mensaje.');
+      io.to(salaId).emit('mensajeSala', {
+        salaId, id: 'auto_' + Date.now() + '_' + Math.floor(Math.random() * 1000), nick: emisor.nick, rol: emisor.rol,
+        registrado: emisor.registrado, tipo: 'texto', hora,
+        texto: `@${nick} no está permitido repetir el mismo mensaje. Si lo vuelves a hacer serás bloqueado durante 24 horas.`
+      });
+      return;
+    }
+
     if (contieneMalasPalabras(textoLimpio)) {
       textoLimpio = censurar(textoLimpio);
       registrarInfraccionYComprobarEscalado(socket, ip, nick);
@@ -855,6 +1060,7 @@ io.on('connection', (socket) => {
     if (clave !== ADMIN_KEY) { socket.emit('error_app', 'Clave incorrecta.'); return; }
     adminSocketId = socket.id;
     unirStaffATodas(socket);
+    avisarPendientesAdmin().catch(() => {});
     if (usuariosCol) await usuariosCol.updateOne({ usuario: socket.data.usuario }, { $set: { rol: 'admin' } });
     socket.emit('rolAsignado', { rol: 'admin' });
     emitirSalasATodos();
@@ -985,29 +1191,8 @@ io.on('connection', (socket) => {
     if (!esModOAdmin(socket.id)) return;
     const { socketDestino, error } = destinoDeBloqueo(socket, nickObjetivo);
     if (error) { socket.emit('error_app', error); return; }
-    const ip = obtenerIP(socketDestino);
-    const uClave = socketDestino.data.registrado && socketDestino.data.usuario ? socketDestino.data.usuario.toLowerCase() : null;
     const motivoFinal = MOTIVOS_BLOQUEO.includes(motivo) ? motivo : 'Otro motivo';
-    const { nivel, horas } = await nivelSiguiente(ip, uClave);
-    const expira = Date.now() + horas * 60 * 60 * 1000;
-    const datos = { expira, motivo: motivoFinal, nivel };
-    const baneadoPor = usuariosConectados.get(socket.id);
-
-    ipsBaneadasCache.set(ip, datos);
-    if (uClave) cuentasBaneadasCache.set(uClave, datos);
-    if (baneadosCol) {
-      await baneadosCol.updateOne({ ip }, { $set: {
-        nick: nickObjetivo, usuarioClave: uClave, motivo: motivoFinal, nivel, horas, baneadoPor,
-        fecha: new Date(), expira: new Date(expira), mensajesApelacion: []
-      } }, { upsert: true });
-    }
-    await sumarBloqueo(ip, uClave, +1);
-
-    // El aviso con el motivo lo ve SOLO la persona bloqueada; al resto del chat no se le anuncia nada.
-    socketDestino.emit('estasBaneado', avisoBloqueo(datos));
-    socketDestino.disconnect(true);
-    [adminSocketId, ...moderadores].filter(Boolean).forEach(id =>
-      io.to(id).emit('sistema', { texto: `🚫 ${nickObjetivo} bloqueado ${textoDuracion(horas)} (nivel ${nivel}) · ${motivoFinal} · por ${baneadoPor}` }));
+    await aplicarBloqueo(socketDestino, nickObjetivo, motivoFinal, usuariosConectados.get(socket.id));
   });
 
   // ---- Listado y desbaneo de IPs (admin o moderador) ----

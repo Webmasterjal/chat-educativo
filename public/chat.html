@@ -78,7 +78,7 @@
       <div class="cab-izq">
         <button type="button" id="btnMenuSalas" class="btn-icono btn-menu-movil" aria-label="Salas">☰</button>
         <div class="marca">
-          <span class="marca-punto"></span>
+          <svg class="marca-icono" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 26.5h25"/><path d="M6 21.5h20l-2.4 5H8.4z"/><path d="M16 21.5v-6.5"/><path d="M10.5 15h11"/><path d="M16 15V7.5"/><path d="M16 7.5c-3.2 0-5.6 2.2-6.2 5.5"/><path d="M16 7.5c3.2 0 5.6 2.2 6.2 5.5"/></svg>
           <h1>La Plaza</h1>
         </div>
       </div>
@@ -106,6 +106,7 @@
             </div>
             <button type="button" id="btnPanelMod" class="menu-item solo-staff">🛡️ Panel de moderación</button>
             <button type="button" id="btnAdmin" class="menu-item">👑 Acceder como admin</button>
+            <button type="button" id="btnFoto" class="menu-item solo-cuenta">🖼️ Mi foto de perfil</button>
             <button type="button" id="btnCorreo" class="menu-item solo-registrado">📧 Correo de recuperación</button>
             <button type="button" id="btnVerNormas" class="menu-item">📜 Normas y privacidad</button>
             <button type="button" id="btnEliminarCuenta" class="menu-item menu-item-peligro solo-cuenta">🗑️ Eliminar mi cuenta</button>
@@ -164,6 +165,45 @@
         </div>
         <div id="listaConectadosSala" class="lista-conectados"></div>
       </aside>
+    </div>
+  </div>
+
+  <!-- ============ VENTANA DE AVISOS Y CONFIRMACIONES ============ -->
+  <div id="modalDialogo" class="modal-fondo modal-dialogo oculto" role="dialog" aria-modal="true" aria-labelledby="dialogoTitulo">
+    <div class="modal-caja modal-estrecho">
+      <div class="modal-cab">
+        <h2 id="dialogoTitulo">Aviso</h2>
+        <button type="button" id="dialogoCerrar" class="modal-cerrar" aria-label="Cerrar">✕</button>
+      </div>
+      <div class="modal-cuerpo dialogo-cuerpo">
+        <p id="dialogoTexto" class="dialogo-texto"></p>
+        <input type="text" id="dialogoInput" class="dialogo-input oculto" autocomplete="off">
+        <div class="dialogo-botones">
+          <button type="button" id="dialogoCancelar" class="btn btn-fantasma oculto">Cancelar</button>
+          <button type="button" id="dialogoAceptar" class="btn btn-primario">Aceptar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ MODAL: MI FOTO DE PERFIL ============ -->
+  <div id="modalFoto" class="modal-fondo oculto">
+    <div class="modal-caja modal-estrecho">
+      <div class="modal-cab">
+        <h2>🖼️ Mi foto de perfil</h2>
+        <button type="button" id="btnCerrarFoto" class="modal-cerrar" aria-label="Cerrar">✕</button>
+      </div>
+      <div class="modal-cuerpo foto-cuerpo">
+        <div id="fotoPreview" class="foto-preview">?</div>
+        <p id="fotoEstado" class="ayuda"></p>
+        <p class="ayuda">Solo fotos apropiadas: nada sexual, violento ni ofensivo. El administrador la revisa antes de que se vea.</p>
+        <input type="file" id="inputFoto" accept="image/*" class="oculto">
+        <div class="dialogo-botones foto-botones">
+          <button type="button" id="btnElegirFoto" class="btn btn-fantasma">📷 Elegir foto</button>
+          <button type="button" id="btnEnviarFoto" class="btn btn-primario oculto">Enviar para revisión</button>
+          <button type="button" id="btnQuitarFoto" class="btn btn-fantasma oculto">Quitar foto</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -281,6 +321,12 @@
             <button id="btnResetPass" type="button">Restablecer</button>
           </div>
           <div id="listaUsuariosAdmin" class="lista-usuarios-admin"></div>
+
+          <div class="solo-admin">
+            <p class="panel-admin-subtitulo">🖼️ Fotos de perfil por revisar <span id="contadorFotos"></span></p>
+            <div id="listaFotos" class="lista-usuarios-admin"></div>
+            <p class="ayuda">Nada se ve en el chat hasta que lo apruebas. Rechaza cualquier imagen sexual, violenta u ofensiva.</p>
+          </div>
 
           <div class="solo-admin">
             <p class="panel-admin-subtitulo">🔧 Diagnóstico de conexión (solo admin)</p>
