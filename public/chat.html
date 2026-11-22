@@ -22,7 +22,7 @@
   <!-- ============ PANTALLA 1: ACCESO (usuario / registro / invitado) ============ -->
   <main id="pantallaAcceso" class="acceso">
     <div class="acceso-caja">
-      <div class="acceso-logo">💬</div>
+      <div class="acceso-logo"><svg class="acceso-icono" viewBox="0 0 48 48" fill="currentColor" fill-rule="evenodd" aria-hidden="true"><path d="M1.5 41.6h45v3H1.5z"/><path d="M24 2l5 10.2H19z"/><path d="M19.8 13.4h8.4v28.2h-8.4zM24 16.6a2.7 2.7 0 0 0-2.7 2.7v3.4h5.4v-3.4a2.7 2.7 0 0 0-2.7-2.7zM24 25a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z"/><path d="M9 28.6l6.2-6.2 6.2 6.2v13H9zM12 31.6h2.6v3.4H12zM16.6 31.6h2.6v3.4h-2.6z"/><path d="M26.6 28.6l6.2-6.2 6.2 6.2v13H26.6zM29.6 31.6h2.6v3.4h-2.6zM34.2 31.6h2.6v3.4h-2.6z"/><circle cx="4.6" cy="30.5" r="4"/><path d="M3.8 33h1.6v8.6H3.8z"/><circle cx="43.4" cy="30.5" r="4"/><path d="M42.6 33h1.6v8.6h-1.6z"/></svg></div>
       <h2>Bienvenido a La Plaza</h2>
       <p class="acceso-sub">Entra con tu cuenta, crea una nueva o pasa como invitado.</p>
 
@@ -78,7 +78,7 @@
       <div class="cab-izq">
         <button type="button" id="btnMenuSalas" class="btn-icono btn-menu-movil" aria-label="Salas">☰</button>
         <div class="marca">
-          <svg class="marca-icono" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 26.5h25"/><path d="M6 21.5h20l-2.4 5H8.4z"/><path d="M16 21.5v-6.5"/><path d="M10.5 15h11"/><path d="M16 15V7.5"/><path d="M16 7.5c-3.2 0-5.6 2.2-6.2 5.5"/><path d="M16 7.5c3.2 0 5.6 2.2 6.2 5.5"/></svg>
+          <svg class="marca-icono" viewBox="0 0 48 48" fill="currentColor" fill-rule="evenodd" aria-hidden="true"><path d="M1.5 41.6h45v3H1.5z"/><path d="M24 2l5 10.2H19z"/><path d="M19.8 13.4h8.4v28.2h-8.4zM24 16.6a2.7 2.7 0 0 0-2.7 2.7v3.4h5.4v-3.4a2.7 2.7 0 0 0-2.7-2.7zM24 25a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z"/><path d="M9 28.6l6.2-6.2 6.2 6.2v13H9zM12 31.6h2.6v3.4H12zM16.6 31.6h2.6v3.4h-2.6z"/><path d="M26.6 28.6l6.2-6.2 6.2 6.2v13H26.6zM29.6 31.6h2.6v3.4h-2.6zM34.2 31.6h2.6v3.4h-2.6z"/><circle cx="4.6" cy="30.5" r="4"/><path d="M3.8 33h1.6v8.6H3.8z"/><circle cx="43.4" cy="30.5" r="4"/><path d="M42.6 33h1.6v8.6h-1.6z"/></svg>
           <h1>La Plaza</h1>
         </div>
       </div>
@@ -107,6 +107,7 @@
             <button type="button" id="btnPanelMod" class="menu-item solo-staff">🛡️ Panel de moderación</button>
             <button type="button" id="btnAdmin" class="menu-item">👑 Acceder como admin</button>
             <button type="button" id="btnFoto" class="menu-item solo-cuenta">🖼️ Mi foto de perfil</button>
+            <button type="button" id="btnSilenciados" class="menu-item">🔇 Personas silenciadas</button>
             <button type="button" id="btnCorreo" class="menu-item solo-registrado">📧 Correo de recuperación</button>
             <button type="button" id="btnVerNormas" class="menu-item">📜 Normas y privacidad</button>
             <button type="button" id="btnEliminarCuenta" class="menu-item menu-item-peligro solo-cuenta">🗑️ Eliminar mi cuenta</button>
@@ -139,6 +140,7 @@
           </div>
           <div class="barra-privado-botones">
             <button type="button" id="btnLlamada" class="btn-barra-privado btn-barra-llamada">📹 Videollamada</button>
+            <button type="button" id="btnReportarPrivado" class="btn-barra-privado">🚩 Reportar</button>
             <button type="button" id="btnSilenciarPrivado" class="btn-barra-privado">🔊 Silenciar</button>
             <button type="button" id="btnCerrarPrivado" class="btn-barra-privado btn-barra-cerrar">✕ Cerrar chat</button>
           </div>
@@ -167,6 +169,7 @@
         <p class="escribiendo-aviso" id="avisoEscribiendo"></p>
         <div class="compositor-envoltorio">
           <div id="panelEmoji" class="panel-emoji oculto"></div>
+          <div id="panelMenciones" class="panel-menciones oculto" role="listbox" aria-label="Personas de la sala"></div>
           <div id="barraRespuesta" class="barra-respuesta oculto">
             <span class="barra-resp-txt" id="textoRespuesta"></span>
             <button type="button" id="btnCancelarRespuesta" aria-label="Cancelar respuesta">✕</button>
@@ -189,6 +192,45 @@
         </div>
         <div id="listaConectadosSala" class="lista-conectados"></div>
       </aside>
+    </div>
+  </div>
+
+  <div id="bannerConexion" class="banner-conexion oculto" role="status">🔌 Sin conexión con el servidor. Reconectando…</div>
+
+  <!-- ============ MODAL: REPORTAR UN PRIVADO ============ -->
+  <div id="modalReporte" class="modal-fondo modal-dialogo oculto">
+    <div class="modal-caja modal-estrecho">
+      <div class="modal-cab">
+        <h2>🚩 Reportar este chat privado</h2>
+        <button type="button" id="btnCerrarReporte" class="modal-cerrar" aria-label="Cerrar">✕</button>
+      </div>
+      <div class="modal-cuerpo dialogo-cuerpo">
+        <p class="dialogo-texto">Se enviarán a los moderadores los últimos mensajes de esta conversación. Nadie más los verá. ¿Qué ha pasado?</p>
+        <select id="reporteMotivo" class="dialogo-input">
+          <option>Acoso o insultos</option>
+          <option>Contenido sexual o inapropiado</option>
+          <option>Spam o publicidad</option>
+          <option>Otro motivo</option>
+        </select>
+        <div class="dialogo-botones">
+          <button type="button" id="btnCancelarReporte" class="btn btn-fantasma">Cancelar</button>
+          <button type="button" id="btnEnviarReporte" class="btn btn-peligro">Enviar reporte</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ MODAL: PERSONAS SILENCIADAS ============ -->
+  <div id="modalSilenciados" class="modal-fondo modal-dialogo oculto">
+    <div class="modal-caja modal-estrecho">
+      <div class="modal-cab">
+        <h2>🔇 Personas silenciadas</h2>
+        <button type="button" id="btnCerrarSilenciados" class="modal-cerrar" aria-label="Cerrar">✕</button>
+      </div>
+      <div class="modal-cuerpo dialogo-cuerpo">
+        <p class="ayuda">No ves sus mensajes en las salas ni en los privados. Solo lo notas tú, y se guarda en este dispositivo.</p>
+        <div id="listaSilenciados"></div>
+      </div>
     </div>
   </div>
 

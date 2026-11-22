@@ -103,7 +103,7 @@ const confirmar = (texto, op) => dialogo({ titulo: (op && op.titulo) || 'Confirm
 const pedirTexto = (texto, op) => dialogo({ titulo: op.titulo, texto, cancelar: 'Cancelar', aceptar: op.aceptar || 'Aceptar', input: { tipo: op.tipo, placeholder: op.placeholder } });
 
 // ================== ICONO DE LA PLAZA (una plaza con fuente) ==================
-const ICONO_PLAZA = '<svg class="icono-plaza" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 26.5h25"/><path d="M6 21.5h20l-2.4 5H8.4z"/><path d="M16 21.5v-6.5"/><path d="M10.5 15h11"/><path d="M16 15V7.5"/><path d="M16 7.5c-3.2 0-5.6 2.2-6.2 5.5"/><path d="M16 7.5c3.2 0 5.6 2.2 6.2 5.5"/></svg>';
+const ICONO_PLAZA = '<svg class="icono-plaza" viewBox="0 0 48 48" fill="currentColor" fill-rule="evenodd" aria-hidden="true"><path d="M1.5 41.6h45v3H1.5z"/><path d="M24 2l5 10.2H19z"/><path d="M19.8 13.4h8.4v28.2h-8.4zM24 16.6a2.7 2.7 0 0 0-2.7 2.7v3.4h5.4v-3.4a2.7 2.7 0 0 0-2.7-2.7zM24 25a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z"/><path d="M9 28.6l6.2-6.2 6.2 6.2v13H9zM12 31.6h2.6v3.4H12zM16.6 31.6h2.6v3.4h-2.6z"/><path d="M26.6 28.6l6.2-6.2 6.2 6.2v13H26.6zM29.6 31.6h2.6v3.4h-2.6zM34.2 31.6h2.6v3.4h-2.6z"/><circle cx="4.6" cy="30.5" r="4"/><path d="M3.8 33h1.6v8.6H3.8z"/><circle cx="43.4" cy="30.5" r="4"/><path d="M42.6 33h1.6v8.6h-1.6z"/></svg>';
 
 // ================== FOTOS DE PERFIL ==================
 const avataresV = {};   // usuarioClave -> versión (solo las aprobadas)
@@ -252,9 +252,12 @@ function idsAMostrarComoPestañas() {
   return Array.from(salasUnidas);
 }
 
+const mencionesSinLeer = {}; // salaId -> true si alguien me ha nombrado en una sala que no estoy viendo
+
 function privadoActual() { return privadoActivo ? privados[privadoActivo] : null; }
 
 function activarSala(id) {
+  delete mencionesSinLeer[id];
   privadoActivo = null;
   salaActiva = id;
   renderTodoElCentro();
@@ -294,6 +297,14 @@ function renderPestañas() {
     b.className = 'pestaña' + (activa ? ' activa' : '');
     b.style.setProperty('--c', color);
     b.textContent = nombreDeSala(id) || '…';
+    if (mencionesSinLeer[id] && !activa) {
+      b.classList.add('con-nuevo');
+      const n = document.createElement('span');
+      n.className = 'pestaña-aviso pestaña-aviso-mencion';
+      n.textContent = '@';
+      n.title = 'Alguien te ha nombrado';
+      b.appendChild(n);
+    }
     b.addEventListener('click', () => activarSala(id));
     pestañasEl.appendChild(b);
   });
@@ -342,6 +353,22 @@ function actualizarCompositor() {
     btnAdjuntar.disabled = !salaActiva;
     entrada.placeholder = salaActiva ? 'Escribe algo con respeto y buen humor...' : 'Entra en una sala para escribir';
   }
+}
+
+function crearBotonSilenciar(nick) {
+  const btn = document.createElement('button');
+  btn.className = 'btn-reportar';
+  btn.textContent = '🔇';
+  btn.title = `Silenciar a ${nick}`;
+  btn.addEventListener('click', async () => {
+    if (await confirmar(`¿Silenciar a ${nick}? No verás sus mensajes (solo lo notas tú). Puedes reactivarlo en el menú › Personas silenciadas.`, { titulo: '🔇 Silenciar', aceptar: 'Silenciar' })) {
+      usuariosIgnorados.add(nick);
+      guardarIgnorados();
+      renderMensajes();
+      mostrarToast(`Has silenciado a ${nick}.`);
+    }
+  });
+  return btn;
 }
 
 function crearBotonReportar(nickReportado, texto) {
@@ -408,7 +435,7 @@ function renderMensajes(conservarScrollEn) {
       return;
     }
 
-    if (usuariosIgnorados.has(item.nick)) {
+    if (usuariosIgnorados.has(item.nick) && item.rol !== 'admin' && item.rol !== 'moderador') {
       div.className = 'mensaje mensaje-silenciado';
       div.innerHTML = `<p class="imagen-eliminada">🔇 Mensaje oculto (has silenciado a ${escapar(item.nick)})</p>`;
       chat.appendChild(div);
@@ -441,7 +468,7 @@ function renderMensajes(conservarScrollEn) {
       div.dataset.msgId = item.id || '';
       agregarAcciones(div, item, '[imagen]');
     } else {
-      div.className = 'mensaje' + (item.nick === miNick ? ' propio' : '');
+      div.className = 'mensaje' + (item.nick === miNick ? ' propio' : '') + ((item.nick !== miNick && contieneMiMencion(item.texto)) ? ' mensaje-mencionado' : '');
       div.innerHTML = `
         <div class="nick" style="color:${colorDeNick(item.nick)}">${miniAvatarHTML(item.nick, item.registrado)}${escapar(item.nick)}</div>
         ${citaHTML(item)}
@@ -636,6 +663,7 @@ socket.on('mensajeSala', (msg) => {
   }
   if (msg.nick !== miNick && ((msg.tipo === 'texto' && contieneMiMencion(msg.texto)) || (msg.respuesta && msg.respuesta.nick === miNick))) {
     avisarMensajePrivadoNuevo();
+    if (!salaVisible(msg.salaId)) { mencionesSinLeer[msg.salaId] = true; renderPestañas(); }
   }
   if (salaVisible(msg.salaId)) { renderMensajes(); renderAvisoEscribiendo(); }
 });
@@ -1122,17 +1150,18 @@ socket.on('imagenPrivada', ({ canalId, nick, imagenDataUrl, hora }) => {
   recibirPrivado(canalId, { nick, imagenDataUrl, hora, tipo: 'imagen' });
 });
 
-socket.on('privadoCerrado', ({ canalId, motivo }) => {
-  if (!privados[canalId]) return;
-  if (motivo === 'desconexion') {
-    // Se queda la conversación para poder leerla; se quita con "Cerrar chat"
-    privados[canalId].conectado = false;
-    renderPestañas();
-  } else {
-    delete privados[canalId];
-    if (privadoActivo === canalId) privadoActivo = null;
-    renderTodoElCentro();
-  }
+socket.on('privadoCerrado', ({ canalId, motivo, porQuien }) => {
+  const p = privados[canalId];
+  if (!p) return;
+  // Si la otra persona se va del chat o cierra el privado, la ventana se cierra enseguida para los dos
+  const quien = porQuien || p.conNick;
+  if (llamada.canalId === canalId) limpiarLlamada();
+  delete privados[canalId];
+  if (privadoActivo === canalId) privadoActivo = null;
+  renderTodoElCentro();
+  mostrarToast(motivo === 'desconexion'
+    ? `${quien} ha salido del chat: el privado se ha cerrado.`
+    : `${quien} ha cerrado el chat privado.`);
 });
 
 
@@ -1218,6 +1247,108 @@ btnEnviarFoto.addEventListener('click', () => {
 btnQuitarFoto.addEventListener('click', async () => {
   if (await confirmar('¿Quitar tu foto de perfil?', { titulo: 'Quitar foto', aceptar: 'Quitar', peligro: true })) socket.emit('quitarAvatar');
 });
+
+
+// ---- Autocompletar @nick: al escribir @ salen las personas de la sala (con muchas personas, es lo cómodo) ----
+const panelMenciones = document.getElementById('panelMenciones');
+let mencionesLista = [];
+let mencionesIndice = 0;
+let mencionesInicio = -1; // posición del @ que se está escribiendo
+
+function cerrarMenciones() {
+  panelMenciones.classList.add('oculto');
+  mencionesLista = [];
+  mencionesInicio = -1;
+}
+function actualizarMenciones() {
+  if (privadoActivo || !salaActiva) { cerrarMenciones(); return; }
+  const pos = entrada.selectionStart;
+  const antes = entrada.value.slice(0, pos);
+  const m = /(^|\s)@([a-zA-Z0-9_.-]{0,20})$/.exec(antes);
+  if (!m) { cerrarMenciones(); return; }
+  const filtro = m[2].toLowerCase();
+  mencionesInicio = pos - m[2].length - 1;
+  mencionesLista = (usuariosPorSala[salaActiva] || [])
+    .filter(n => n !== miNick && n.toLowerCase().includes(filtro))
+    .sort((a, b) => (b.toLowerCase().startsWith(filtro) - a.toLowerCase().startsWith(filtro)) || a.localeCompare(b))
+    .slice(0, 6);
+  if (!mencionesLista.length) { cerrarMenciones(); return; }
+  mencionesIndice = Math.min(mencionesIndice, mencionesLista.length - 1);
+  panelMenciones.innerHTML = '';
+  mencionesLista.forEach((n, i) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.setAttribute('role', 'option');
+    b.className = 'opcion-mencion' + (i === mencionesIndice ? ' activa' : '');
+    b.innerHTML = `${miniAvatarHTML(n)}<span style="color:${colorDeNick(n)}">${escapar(n)}</span>`;
+    // mousedown (no click) para que el campo de texto no pierda el foco en el móvil
+    b.addEventListener('mousedown', (e) => { e.preventDefault(); elegirMencion(n); });
+    panelMenciones.appendChild(b);
+  });
+  panelMenciones.classList.remove('oculto');
+}
+function elegirMencion(nick) {
+  const fin = entrada.selectionStart;
+  entrada.value = entrada.value.slice(0, mencionesInicio) + '@' + nick + ' ' + entrada.value.slice(fin);
+  const nueva = mencionesInicio + nick.length + 2;
+  entrada.setSelectionRange(nueva, nueva);
+  cerrarMenciones();
+  entrada.focus();
+}
+entrada.addEventListener('input', () => { mencionesIndice = 0; actualizarMenciones(); });
+entrada.addEventListener('click', actualizarMenciones);
+entrada.addEventListener('blur', () => setTimeout(cerrarMenciones, 120));
+entrada.addEventListener('keydown', (e) => {
+  if (panelMenciones.classList.contains('oculto') || !mencionesLista.length) return;
+  if (e.key === 'ArrowDown') { e.preventDefault(); mencionesIndice = (mencionesIndice + 1) % mencionesLista.length; actualizarMenciones(); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); mencionesIndice = (mencionesIndice - 1 + mencionesLista.length) % mencionesLista.length; actualizarMenciones(); }
+  else if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); e.stopPropagation(); elegirMencion(mencionesLista[mencionesIndice]); }
+  else if (e.key === 'Escape') { e.preventDefault(); cerrarMenciones(); }
+}, true);
+
+
+// ---- Reportar un chat privado ----
+const modalReporte = document.getElementById('modalReporte');
+document.getElementById('btnReportarPrivado').addEventListener('click', () => { if (privadoActivo) modalReporte.classList.remove('oculto'); });
+document.getElementById('btnCerrarReporte').addEventListener('click', () => modalReporte.classList.add('oculto'));
+document.getElementById('btnCancelarReporte').addEventListener('click', () => modalReporte.classList.add('oculto'));
+modalReporte.addEventListener('mousedown', (e) => { if (e.target === modalReporte) modalReporte.classList.add('oculto'); });
+document.getElementById('btnEnviarReporte').addEventListener('click', () => {
+  if (!privadoActivo) return;
+  socket.emit('reportarPrivado', { canalId: privadoActivo, motivo: document.getElementById('reporteMotivo').value });
+  modalReporte.classList.add('oculto');
+});
+
+// ---- Personas silenciadas (menú) ----
+const modalSilenciados = document.getElementById('modalSilenciados');
+function pintarSilenciados() {
+  const lista = Array.from(usuariosIgnorados);
+  const cont = document.getElementById('listaSilenciados');
+  cont.innerHTML = lista.length ? '' : '<p class="ayuda">No tienes a nadie silenciado.</p>';
+  lista.forEach(n => {
+    const fila = document.createElement('div');
+    fila.className = 'fila-foto';
+    fila.innerHTML = `<div class="fila-foto-info"><strong style="color:${colorDeNick(n)}">${escapar(n)}</strong></div>`;
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'btn-barra-privado';
+    b.textContent = 'Reactivar';
+    b.addEventListener('click', () => { usuariosIgnorados.delete(n); guardarIgnorados(); pintarSilenciados(); renderMensajes(); renderBarraPrivado(); });
+    fila.appendChild(b);
+    cont.appendChild(fila);
+  });
+}
+document.getElementById('btnSilenciados').addEventListener('click', () => { pintarSilenciados(); modalSilenciados.classList.remove('oculto'); });
+document.getElementById('btnCerrarSilenciados').addEventListener('click', () => modalSilenciados.classList.add('oculto'));
+modalSilenciados.addEventListener('mousedown', (e) => { if (e.target === modalSilenciados) modalSilenciados.classList.add('oculto'); });
+
+// ---- Aviso de conexión perdida y servidor dormido ----
+const bannerConexion = document.getElementById('bannerConexion');
+socket.on('disconnect', () => { if (document.body.dataset.vista === 'chat') bannerConexion.classList.remove('oculto'); });
+socket.on('connect', () => bannerConexion.classList.add('oculto'));
+setTimeout(() => {
+  if (!socket.connected) estadoConexion.textContent = 'El servidor estaba dormido y se está despertando. Puede tardar hasta un minuto…';
+}, 7000);
 
 // ---- Fotos pendientes (solo el administrador) ----
 const listaFotos = document.getElementById('listaFotos');
@@ -1589,6 +1720,7 @@ socket.on('unido', ({ auto }) => { if (!auto) cerrarDrawers(); });
 // Si el servidor se reinicia, la sesión en memoria se pierde: volvemos al acceso en limpio
 socket.on('bienvenida', () => {
   if (yaSaludo && document.body.dataset.vista === 'chat') {
+    const eraInvitado = !document.body.classList.contains('es-registrado');
     salasUnidas.clear();
     salaActiva = null;
     privadoActivo = null;
@@ -1602,9 +1734,16 @@ socket.on('bienvenida', () => {
     btnAdmin.classList.remove('oculto');
     panelAdmin.classList.add('oculto');
     renderListaSalas();
+    limpiarLlamada();
     renderPestañas();
     renderMensajes();
-    mostrarAcceso('La conexión se reinició. Vuelve a entrar para continuar.');
+    if (eraInvitado) {
+      // Los invitados no tienen cuenta que recuperar: vuelven solos a La Plaza con un nombre nuevo
+      mostrarChat();
+      mostrarToast('Se ha restablecido la conexión. Has vuelto a La Plaza con un nombre nuevo.');
+    } else {
+      mostrarAcceso('La conexión se reinició. Vuelve a entrar con tu cuenta para continuar.');
+    }
   }
   yaSaludo = true;
   sincronizarRolUI();
@@ -1647,10 +1786,14 @@ socket.on('listaEquipo', ({ equipo, porSala, moderadores, maxModeradores }) => {
       }).join('')
     : '<p class="ayuda">Todavía no hay moderadores.</p>';
   document.getElementById('listaCoberturaSalas').innerHTML = porSala.length
-    ? porSala.map(s => {
-        const quien = s.staff.length ? '🛡️ ' + s.staff.map(escapar).join(', ') : '<span class="equipo-alerta">⚠️ sin moderación presente</span>';
-        return `<div class="fila-equipo"><span class="equipo-nombre">${escapar(s.nombre)} <small>· ${s.personas} ${s.personas === 1 ? 'persona' : 'personas'}</small></span>` +
-               `<span class="equipo-detalle">${quien}</span></div>`;
+    ? porSala.map(sl => {
+        const hayStaff = sl.personasLista.some(x => x.rol !== 'usuario');
+        const alerta = hayStaff ? '' : '<span class="equipo-alerta">⚠️ sin moderación presente</span>';
+        const gente = sl.personasLista.length
+          ? sl.personasLista.map(x => `<span class="chip-persona${x.rol === 'usuario' ? '' : ' chip-staff'}">${x.rol === 'admin' ? '👑 ' : (x.rol === 'moderador' ? '🛡️ ' : '')}${escapar(x.nick)}</span>`).join('')
+          : '<span class="ayuda">Nadie ahora mismo</span>';
+        return `<div class="fila-sala-panel"><div class="fila-equipo"><span class="equipo-nombre">${escapar(sl.nombre)} <small>· ${sl.personas} ${sl.personas === 1 ? 'persona' : 'personas'}</small></span>` +
+               `<span class="equipo-detalle">${alerta}</span></div><div class="chips-personas">${gente}</div></div>`;
       }).join('')
     : '<p class="ayuda">No hay salas abiertas ahora mismo.</p>';
 });
@@ -1940,6 +2083,7 @@ function agregarAcciones(div, item, textoReporte) {
     });
   }
   if (item.nick !== miNick) barra.appendChild(crearBotonReportar(item.nick, textoReporte));
+  if (item.nick !== miNick && item.rol !== 'admin' && item.rol !== 'moderador' && !String(item.id).startsWith('bot_')) barra.appendChild(crearBotonSilenciar(item.nick));
   if (esPrivilegiado() && item.id) barra.appendChild(crearBotonEliminar(item.id));
   if (barra.children.length) div.appendChild(barra);
 }

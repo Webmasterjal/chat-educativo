@@ -405,7 +405,10 @@ async function datosEquipo() {
   const porSala = salasVisibles.map(sl => ({
     nombre: sl.nombre,
     personas: sl.usuarios.size,
-    staff: vivos.filter(s => sl.usuarios.has(s.id)).map(s => s.data.usuario)
+    staff: vivos.filter(s => sl.usuarios.has(s.id)).map(s => s.data.usuario),
+    // Todas las personas que hay dentro (incluidos admin y moderadores), con su rol: solo lo ve el staff
+    personasLista: Array.from(sl.usuarios).map(id => ({ nick: usuariosConectados.get(id), rol: rolDe(id) }))
+      .filter(x => x.nick).sort((a, b) => (a.rol === 'usuario') - (b.rol === 'usuario') || a.nick.localeCompare(b.nick))
   }));
   return { equipo, porSala, moderadores: equipo.filter(e => e.rol === 'moderador').length, maxModeradores: MAX_MODERADORES };
 }
@@ -626,6 +629,36 @@ function esGritando(texto) {
   return mayusculas.length / soloLetras.length > 0.8;
 }
 
+// ---- Reportes: aviso al staff cuando varias personas distintas reportan a la misma ----
+const MOTIVOS_REPORTE = ['Acoso o insultos', 'Contenido sexual o inapropiado', 'Spam o publicidad', 'Otro motivo'];
+const REPORTES_AVISO = 3;
+const REPORTES_VENTANA_MS = 30 * 60 * 1000;
+const reportesPorNick = new Map();  // nick en minusculas -> [{ por, t }]
+const reportesAvisados = new Map(); // nick en minusculas -> momento del aviso
+const textosPrivados = new Map();   // canalId -> ultimos textos (solo memoria, se borran al cerrar; sirven para adjuntarlos a una denuncia)
+function avisarAlStaff(texto) {
+  [adminSocketId, ...moderadores].filter(Boolean).forEach(id => io.to(id).emit('sistema', { texto }));
+  guardarEnHistorialStaff({ tipo: 'sistema', texto });
+}
+function registrarReporte(reportado, porQuien) {
+  const k = String(reportado).toLowerCase();
+  const ahora = Date.now();
+  const lista = (reportesPorNick.get(k) || []).filter(x => ahora - x.t < REPORTES_VENTANA_MS);
+  lista.push({ por: String(porQuien).toLowerCase(), t: ahora });
+  reportesPorNick.set(k, lista);
+  const distintos = new Set(lista.map(x => x.por)).size;
+  const avisadoEn = reportesAvisados.get(k);
+  if (distintos >= REPORTES_AVISO && !(avisadoEn && ahora - avisadoEn < REPORTES_VENTANA_MS)) {
+    reportesAvisados.set(k, ahora);
+    avisarAlStaff(`⚠️ ${reportado} ya tiene reportes de ${distintos} personas distintas en los últimos 30 minutos. Conviene revisarlo.`);
+  }
+}
+setInterval(() => {
+  const ahora = Date.now();
+  reportesPorNick.forEach((l, k) => { if (!l.some(x => ahora - x.t < REPORTES_VENTANA_MS)) reportesPorNick.delete(k); });
+  reportesAvisados.forEach((t, k) => { if (ahora - t > REPORTES_VENTANA_MS) reportesAvisados.delete(k); });
+}, 5 * 60 * 1000).unref();
+
 // ---- Videollamada en chats privados: el servidor solo reenvia la señalizacion entre las dos personas ----
 const llamadas = new Map(); // canalId -> { a, b, estado: 'solicitada'|'activa', timer }
 function terminarLlamada(canalId, motivo) {
@@ -679,7 +712,7 @@ io.on('connection', (socket) => {
     const nickAnterior = usuariosConectados.get(socket.id);
     if (adminSocketId === socket.id) adminSocketId = null;
     moderadores.delete(socket.id);
-    Array.from(socket.data.privados.values()).forEach(canalId => cerrarPrivadoInterno(socket, canalId, 'cerrado'));
+    Array.from(socket.data.privados.values()).forEach(canalId => cerrarPrivadoInterno(socket, canalId, 'desconexion'));
     Array.from(socket.data.salasUnidas).forEach(id => abandonarSala(socket, id, false));
     socket.data.registrado = false;
     socket.data.usuario = null;
@@ -902,6 +935,11 @@ io.on('connection', (socket) => {
     if (rol === 'admin') avisarPendientesAdmin().catch(() => {});
     io.emit('totalConectados', usuariosConectados.size);
     emitirSalasATodos();
+    // El nombre ha cambiado (de invitado a cuenta): se refresca la lista de personas de sus salas
+    socket.data.salasUnidas.forEach(id => {
+      const sl = salas.get(id);
+      if (sl) io.emit('usuariosDeSala', { salaId: id, usuarios: usuariosDeSala(sl) });
+    });
   }
 
   // ---- Crear sala ----
@@ -1325,6 +1363,10 @@ io.on('connection', (socket) => {
     if (!socket.rooms.has(canalId)) return;
     const textoLimpio = String(texto || '').trim().slice(0, 400);
     if (!textoLimpio) return;
+    const lista = textosPrivados.get(canalId) || [];
+    lista.push({ nick: usuariosConectados.get(socket.id), texto: textoLimpio });
+    if (lista.length > 10) lista.shift();
+    textosPrivados.set(canalId, lista);
     io.to(canalId).emit('mensajePrivado', {
       canalId, nick: usuariosConectados.get(socket.id), texto: textoLimpio,
       hora: horaMadrid()
@@ -1338,11 +1380,16 @@ io.on('connection', (socket) => {
       canalId, nick: usuariosConectados.get(socket.id), imagenDataUrl, imagenNombre: String(imagenNombre || 'imagen'),
       hora: horaMadrid()
     });
-    // No se guarda ninguna copia: el privado es 100% anonimo y se borra al cerrarse.
+    const lista = textosPrivados.get(canalId) || [];
+    lista.push({ nick: usuariosConectados.get(socket.id), texto: '[imagen]' });
+    if (lista.length > 10) lista.shift();
+    textosPrivados.set(canalId, lista);
+    // Las imagenes no se guardan: el privado se borra al cerrarse.
   });
 
   function cerrarPrivadoInterno(socketOrigen, canalId, motivo) {
     terminarLlamada(canalId, 'privado_cerrado');
+    textosPrivados.delete(canalId);
     const miNickOrigen = usuariosConectados.get(socketOrigen.id);
     let otroNick = null;
     socketOrigen.data.privados.forEach((c, nick) => { if (c === canalId) otroNick = nick; });
@@ -1361,6 +1408,20 @@ io.on('connection', (socket) => {
     socket.data.privados.forEach((c, n) => { if (c === canalId) nick = n; });
     return nick ? socketPorNick(nick) : null;
   }
+  // ---- Denunciar un chat privado: la persona decide enviar a moderacion los ultimos mensajes ----
+  socket.on('reportarPrivado', ({ canalId, motivo }) => {
+    const otro = otroDelCanal(canalId);
+    const yo = usuariosConectados.get(socket.id);
+    if (!otro) { socket.emit('error_app', 'No se puede enviar el reporte: la otra persona ya no está en el chat.'); return; }
+    if (!recuperacion.permitir('repp:' + socket.id, 5, 60 * 60 * 1000)) { socket.emit('error_app', 'Has enviado muchos reportes seguidos. Espera un poco.'); return; }
+    const m = MOTIVOS_REPORTE.includes(motivo) ? motivo : 'Otro motivo';
+    const nickOtro = usuariosConectados.get(otro.id);
+    const ultimos = (textosPrivados.get(canalId) || []).slice(-8).map(x => `${x.nick}: ${String(x.texto).slice(0, 100)}`).join(' | ');
+    avisarAlStaff((`🚩 PRIVADO · ${yo} denuncia a ${nickOtro} · ${m}` + (ultimos ? ` · Últimos mensajes → ${ultimos}` : '')).slice(0, 900));
+    registrarReporte(nickOtro, yo);
+    socket.emit('avisoOk', 'Gracias. Hemos enviado tu denuncia y los últimos mensajes de esta conversación a los moderadores. Nadie más los ha visto.');
+  });
+
   socket.on('llamadaSolicitar', ({ canalId }) => {
     if (typeof canalId !== 'string') return;
     const otro = otroDelCanal(canalId);
@@ -1419,8 +1480,9 @@ io.on('connection', (socket) => {
     const quienReporta = usuariosConectados.get(socket.id);
     const resumen = String(texto || '').slice(0, 120);
     const aviso = `🚩 ${quienReporta} reportó a ${nickReportado} en "${nombreSala}": "${resumen}"`;
-    [adminSocketId, ...moderadores].filter(Boolean).forEach(id => io.to(id).emit('sistema', { texto: aviso }));
-    guardarEnHistorialStaff({ tipo: 'sistema', texto: aviso });
+    if (!recuperacion.permitir('rep:' + socket.id, 10, 60 * 60 * 1000)) { socket.emit('error_app', 'Has enviado muchos reportes seguidos. Espera un poco.'); return; }
+    avisarAlStaff(aviso);
+    registrarReporte(nickReportado, quienReporta);
     socket.emit('avisoOk', 'Gracias, tu reporte se ha enviado a los moderadores.');
   });
 
@@ -1492,6 +1554,7 @@ io.on('connection', (socket) => {
     const nickSaliente = usuariosConectados.get(socket.id);
     socket.data.privados.forEach((canalId, otroNick) => {
       terminarLlamada(canalId, 'desconexion');
+      textosPrivados.delete(canalId);
       io.to(canalId).emit('privadoCerrado', { canalId, motivo: 'desconexion', porQuien: nickSaliente });
       const otro = socketPorNick(otroNick);
       if (otro) { otro.leave(canalId); otro.data.privados.delete(nickSaliente); }
@@ -1536,6 +1599,13 @@ async function limpiarBloqueosCaducados() {
   } catch (e) { /* silencioso */ }
 }
 setInterval(limpiarBloqueosCaducados, 60 * 60 * 1000).unref();
+
+app.get('/salud', (req, res) => res.json({ ok: true }));
+// Si en Render se define URL_PUBLICA (la direccion del chat), el servidor se visita a si mismo cada 10 minutos
+if (process.env.URL_PUBLICA) {
+  const urlSalud = process.env.URL_PUBLICA.replace(/\/$/, '') + '/salud';
+  setInterval(() => { fetch(urlSalud).catch(() => {}); }, 10 * 60 * 1000).unref();
+}
 
 conectarDB().finally(() => {
   limpiarBloqueosCaducados();

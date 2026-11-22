@@ -989,7 +989,6 @@ body.es-admin .solo-admin { display: block; }
 
 
 /* ================== ICONO DE LA PLAZA, VENTANAS PROPIAS Y FOTOS DE PERFIL ================== */
-.icono-plaza { width: 1.15em; height: 1.15em; vertical-align: -0.2em; color: var(--pri); }
 .modal-dialogo { z-index: 300; }
 .dialogo-cuerpo { padding: 18px 22px 22px; }
 .dialogo-texto { margin: 0 0 14px; font-size: 15px; line-height: 1.5; color: var(--tinta); white-space: pre-line; overflow-wrap: anywhere; }
@@ -1081,3 +1080,39 @@ html[data-tema="oscuro"] .invitacion-llamada { background: #3a2f10; color: #ffe9
 }
 
 #modalBloqueo { z-index: 150; } /* por encima del visor de imágenes desde el que se abre */
+
+
+/* ================== ICONO DE PLAZA DE PUEBLO (iglesia, casas y árboles) ================== */
+.icono-plaza { width: 1.45em; height: 1.45em; vertical-align: -0.38em; color: var(--pri); }
+.marca-icono-portada { color: var(--pri); filter: none; width: 42px; height: 42px; }
+.acceso-logo .acceso-icono { width: 62%; height: 62%; color: #fff; }
+.fila-sala-panel { border-bottom: 1px solid var(--borde); padding-bottom: 6px; margin-bottom: 4px; }
+.chips-personas { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 0 4px; }
+.chip-persona { background: var(--panel); border: 1px solid var(--borde); border-radius: 999px; padding: 3px 10px; font-size: 12px; font-weight: 700; color: var(--tinta); }
+.chip-staff { background: var(--pri-claro); border-color: var(--pri); }
+
+
+/* ================== MENCIONES (@nick) ================== */
+.mensaje-mencionado { border-color: var(--acento); box-shadow: 0 0 0 2px rgba(255, 122, 89, 0.35), 0 4px 12px rgba(255, 122, 89, 0.18); background: #fff4ef; }
+html[data-tema="oscuro"] .mensaje-mencionado { background: #3b2a27; }
+.pestaña-aviso-mencion { background: var(--acento); }
+.panel-menciones {
+  position: absolute; left: 14px; right: 14px; bottom: 100%; margin-bottom: 4px; z-index: 20;
+  background: var(--panel); border: 1px solid var(--borde); border-radius: 16px; overflow: hidden;
+  box-shadow: 0 -6px 24px rgba(80, 60, 170, 0.18); max-width: 360px;
+}
+.opcion-mencion {
+  display: flex; align-items: center; gap: 4px; width: 100%; padding: 11px 14px; border: 0; background: transparent;
+  font-size: 15px; font-weight: 700; text-align: left; cursor: pointer; color: var(--tinta);
+}
+.opcion-mencion:hover, .opcion-mencion.activa { background: var(--pri-claro); }
+
+
+/* ================== AVISO DE CONEXIÓN ================== */
+.banner-conexion {
+  position: fixed; top: env(safe-area-inset-top, 0px); left: 50%; transform: translateX(-50%); z-index: 400;
+  background: #fff3cd; color: #5a4300; border: 1px solid #f0d78a; border-radius: 0 0 14px 14px;
+  padding: 8px 16px; font-size: 13px; font-weight: 800; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18); max-width: 94vw; text-align: center;
+}
+html[data-tema="oscuro"] .banner-conexion { background: #3a2f10; color: #ffe9a8; border-color: #6b5718; }
+select.dialogo-input { appearance: auto; cursor: pointer; }
