@@ -1116,3 +1116,7 @@ html[data-tema="oscuro"] .mensaje-mencionado { background: #3b2a27; }
 }
 html[data-tema="oscuro"] .banner-conexion { background: #3a2f10; color: #ffe9a8; border-color: #6b5718; }
 select.dialogo-input { appearance: auto; cursor: pointer; }
+
+
+.aviso-limite-salas { margin: 10px 4px 0; padding: 10px 12px; border-radius: 12px; background: #fff3cd; color: #5a4300; font-size: 12px; font-weight: 700; line-height: 1.45; }
+html[data-tema="oscuro"] .aviso-limite-salas { background: #3a2f10; color: #ffe9a8; }

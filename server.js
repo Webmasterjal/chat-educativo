@@ -243,14 +243,23 @@ function listaSalas() {
   }));
 }
 
+// El creador de una sala se reconoce por su cuenta (o, si es invitado, por su conexion), NUNCA por el nombre:
+// asi nadie puede "heredar" una sala registrandose despues con el mismo nick.
+function claveCreador(socket) {
+  return socket.data.registrado && socket.data.usuario ? 'u:' + socket.data.usuario.toLowerCase() : 's:' + socket.id;
+}
+function esCreadorDeSala(sala, socketId) {
+  const sk = io.sockets.sockets.get(socketId);
+  return !!sk && !!sala.creadorId && sala.creadorId === claveCreador(sk);
+}
+
 function listaSalasPara(socketId) {
-  const miNickActual = usuariosConectados.get(socketId);
   const privilegiado = esModOAdmin(socketId);
   return Array.from(salas.values())
     .filter(s => !s.oculta || privilegiado)
     .map(s => ({
       id: s.id, nombre: s.nombre, numUsuarios: s.usuarios.size, permanente: !!s.permanente, fija: !!s.fija,
-      puedeCerrar: !s.oculta && !s.fija && (privilegiado || (s.creador === miNickActual && !s.permanente)),
+      puedeCerrar: !s.oculta && !s.fija && (privilegiado || (esCreadorDeSala(s, socketId) && !s.permanente)),
       puedeFijar: privilegiado && !s.oculta && !s.fija
     }));
 }
@@ -581,29 +590,43 @@ async function registrarInfraccionYComprobarEscalado(socket, ip, nick) {
 }
 
 // ---- Mensajes repetidos: no se permite repetir el mismo texto (seguido ni pasado un rato) ----
-const REPETICION_VENTANA_MS = 5 * 60 * 1000;   // mismo mensaje dentro de estos minutos = repeticion
+const REPETICION_VENTANA_MS = 5 * 60 * 1000;   // se cuentan las veces que UNA MISMA PERSONA dice la misma frase en estos minutos
+const REPETICION_MAX_IGUALES = 2;                // la misma frase se permite hasta 2 veces; la 3.ª ya es repetir
 const REPETICION_AVISO_VALIDO_MS = 60 * 60 * 1000; // el aviso previo vale 1 hora; si repite despues de avisar, se bloquea
-const historialTextos = new Map();   // clave de persona -> [{ n, t }]
-const avisosRepeticion = new Map();  // clave de persona -> momento del aviso
+const historialTextos = new Map();   // persona -> [{ n, t }]  (solo sus propios mensajes)
+const avisosRepeticion = new Map();  // persona -> momento del aviso
 
+// Saludos y palabras de uso diario: nunca cuentan como repeticion ("hola", "ok", "buenos dias", "gracias"...)
+const PALABRAS_COMUNES = new Set(('hola holaa buenas buenos dias dia tardes tarde noches noche a todos todas todo que tal como estas estais ' +
+  'estas va vais gracias muchas vale ok okey oki si no sip nop claro bien genial guay jaja jeje jiji jajaja ' +
+  'adios chao ciao bye hasta luego pronto manana saludos buen bienvenido bienvenida bienvenidos hey ey buenisimo igualmente ' +
+  'de nada por favor perdon lo siento yo tu el ella nosotros y e o pero mas me te se').split(' '));
 function normalizarTexto(t) {
   return String(t).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     .replace(/[^\p{L}\p{N}]+/gu, ' ').replace(/(.)\1{2,}/g, '$1$1').trim();
 }
+// Cada persona cuenta por separado: la cuenta si la tiene, y si no, su conexion. NUNCA por IP
+// (varias personas comparten IP en una casa, una oficina o los datos moviles).
 function claveDePersona(socket) {
-  return socket.data.registrado && socket.data.usuario ? 'u:' + socket.data.usuario.toLowerCase() : 'ip:' + obtenerIP(socket);
+  return socket.data.registrado && socket.data.usuario ? 'u:' + socket.data.usuario.toLowerCase() : 's:' + socket.id;
 }
-// Devuelve true si el mensaje es una repeticion (sin guardarlo). Si no lo es, lo recuerda.
+function esFraseDeUsoComun(n) {
+  const palabras = n.split(' ');
+  return palabras.length < 2 || palabras.every(p => PALABRAS_COMUNES.has(p));
+}
+// Devuelve true si esta persona ya ha dicho esta misma frase demasiadas veces seguidas (sin guardarla).
 function esRepeticion(socket, texto) {
   const n = normalizarTexto(texto);
-  if (n.length < 4) return false; // "ok", "si", emojis sueltos... no cuentan
+  if (n.length < 4 || esFraseDeUsoComun(n)) return false; // palabras sueltas, saludos y emojis no cuentan
   const clave = claveDePersona(socket);
   const ahora = Date.now();
   const lista = (historialTextos.get(clave) || []).filter(x => ahora - x.t < REPETICION_VENTANA_MS);
-  const repetido = lista.some(x => x.n === n);
-  if (!repetido) { lista.push({ n, t: ahora }); if (lista.length > 20) lista.shift(); }
+  const veces = lista.filter(x => x.n === n).length;
+  if (veces >= REPETICION_MAX_IGUALES) { historialTextos.set(clave, lista); return true; }
+  lista.push({ n, t: ahora });
+  if (lista.length > 30) lista.shift();
   historialTextos.set(clave, lista);
-  return repetido;
+  return false;
 }
 // Quien "habla" en el aviso automatico: el administrador si esta, si no un moderador, si no el bot
 function emisorAutomatico() {
@@ -931,6 +954,7 @@ io.on('connection', (socket) => {
     if (rol === 'admin') adminSocketId = socket.id;
     if (rol === 'moderador') moderadores.add(socket.id);
     if (rol === 'admin' || rol === 'moderador') unirStaffATodas(socket);
+    salas.forEach(sl => { if (sl.creadorId === 's:' + socket.id) { sl.creadorId = claveCreador(socket); sl.creador = usuario; } });
     enviarEstadoAvatar(socket).catch(() => {});
     if (rol === 'admin') avisarPendientesAdmin().catch(() => {});
     io.emit('totalConectados', usuariosConectados.size);
@@ -954,7 +978,7 @@ io.on('connection', (socket) => {
       return;
     }
     const id = 'sala_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
-    const sala = { id, nombre: nombreLimpio, creador: usuariosConectados.get(socket.id), usuarios: new Set(), vacioDesde: null, permanente: privilegiado };
+    const sala = { id, nombre: nombreLimpio, creador: usuariosConectados.get(socket.id), creadorId: claveCreador(socket), usuarios: new Set(), vacioDesde: null, permanente: privilegiado };
     salas.set(id, sala);
     if (sala.permanente) guardarSalaFija(sala);
     // Quien la crea entra directamente; el staff conectado (admin y moderadores) tambien, para tenerla controlada
@@ -964,7 +988,10 @@ io.on('connection', (socket) => {
     });
     emitirSalasATodos();
     io.emit('usuariosDeSala', { salaId: id, usuarios: usuariosDeSala(sala) });
-    io.emit('sistema', { texto: `${usuariosConectados.get(socket.id)} ha creado la sala "${nombreLimpio}"` });
+    const totalAhora = Array.from(salas.values()).filter(x => !x.oculta && !x.fija).length;
+    const esLaUltima = totalAhora >= MAX_SALAS;
+    io.emit('sistema', { texto: `${usuariosConectados.get(socket.id)} ha creado la sala "${nombreLimpio}"` + (esLaUltima ? ` · Ya hay ${MAX_SALAS} salas: no se podrán crear más hasta que se elimine alguna.` : '') });
+    if (esLaUltima) socket.emit('avisoOk', `Has creado la última sala que se puede crear (${MAX_SALAS} de ${MAX_SALAS}). No se podrán crear más hasta que se elimine alguna.`);
   });
 
   // ---- Fijar / desfijar una sala (solo staff). Una sala fija no se borra aunque quede vacia ----
@@ -1075,11 +1102,11 @@ io.on('connection', (socket) => {
         return;
       }
       avisosRepeticion.set(clave, Date.now());
-      socket.emit('error_app', 'No se permite repetir el mismo mensaje.');
+      socket.emit('error_app', 'No se permite repetir varias veces la misma frase.');
       io.to(salaId).emit('mensajeSala', {
         salaId, id: 'auto_' + Date.now() + '_' + Math.floor(Math.random() * 1000), nick: emisor.nick, rol: emisor.rol,
         registrado: emisor.registrado, tipo: 'texto', hora,
-        texto: `@${nick} no está permitido repetir el mismo mensaje. Si lo vuelves a hacer serás bloqueado durante 24 horas.`
+        texto: `@${nick} no está permitido repetir varias veces la misma frase. Si lo vuelves a hacer serás bloqueado durante 24 horas.`
       });
       return;
     }
@@ -1491,7 +1518,7 @@ io.on('connection', (socket) => {
     if (!sala) return;
     if (sala.oculta) return;
     if (sala.fija) { socket.emit('error_app', 'La Plaza es la sala principal y no se puede cerrar.'); return; }
-    const esCreador = sala.creador === usuariosConectados.get(socket.id);
+    const esCreador = esCreadorDeSala(sala, socket.id);
     const esPriv = esModOAdmin(socket.id);
 
     if (!esPriv && (!esCreador || sala.permanente)) { socket.emit('error_app', 'No puedes cerrar esta sala.'); return; }

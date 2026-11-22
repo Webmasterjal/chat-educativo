@@ -10,6 +10,7 @@ const flechaSalas = document.getElementById('flechaSalas');
 const contadorSalas = document.getElementById('contadorSalas');
 const formCrearSala = document.getElementById('formCrearSala');
 const nombreSalaInput = document.getElementById('nombreSala');
+const avisoLimiteSalas = document.getElementById('avisoLimiteSalas');
 const pestañasEl = document.getElementById('pestañas');
 const btnAdmin = document.getElementById('btnAdmin');
 const etiquetaRol = document.getElementById('etiquetaRol');
@@ -522,6 +523,10 @@ function renderListaSalas() {
   // El contador no incluye La Plaza (fija) ni la sala Staff (oculta)
   const salasVisiblesCount = salasDisponibles.filter(s => s.id !== 'staff' && !s.fija).length;
   contadorSalas.textContent = `(${salasVisiblesCount}/10)`;
+  // Con 10 salas no se muestra la opción de crear otra (hasta que se elimine alguna)
+  const salasLlenas = salasVisiblesCount >= 10;
+  formCrearSala.classList.toggle('oculto', salasLlenas);
+  avisoLimiteSalas.classList.toggle('oculto', !salasLlenas);
   listaSalasEl.innerHTML = '';
   salasDisponibles.forEach(s => {
     const unido = salasUnidas.has(s.id);
