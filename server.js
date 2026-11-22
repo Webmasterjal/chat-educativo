@@ -209,6 +209,89 @@ function mapaAvatares() {
   return o;
 }
 
+// ---- Icono de cada sala segun su nombre (palabras clave en español; si no reconoce nada, pone 💬) ----
+const ICONOS_SALA = {
+  '⚽': 'futbol soccer liga champions balon porra penalti',
+  '🏀': 'baloncesto basket nba',
+  '🏅': 'deporte deportes deportivo',
+  '🎾': 'tenis padel',
+  '🏊': 'natacion piscina nadar',
+  '🚴': 'ciclismo bici bicicleta bicicletas ciclistas',
+  '🏃': 'running correr atletismo maraton corredores',
+  '🏋️': 'gimnasio gym fitness pesas crossfit entrenamiento',
+  '🧘': 'yoga meditacion mindfulness relajacion',
+  '🥊': 'boxeo mma karate judo',
+  '🏎️': 'formula f1 carreras rallies',
+  '🚗': 'coches coche automovil motor',
+  '🏍️': 'motos moto motociclismo',
+  '🎵': 'musica canciones rock pop rap reggaeton flamenco jazz hiphop dj playlist cantar',
+  '🎤': 'karaoke cantantes conciertos',
+  '🎸': 'guitarra bandas grupos',
+  '🎹': 'piano',
+  '🎬': 'cine peliculas pelis films cortos',
+  '📺': 'series television tv netflix tele',
+  '🎮': 'juegos videojuegos gamers gaming gamer play ps5 ps4 xbox nintendo fortnite minecraft consola consolas',
+  '♟️': 'ajedrez',
+  '🎲': 'dados rol parchis mesa',
+  '🃏': 'cartas poker mus brisca tute',
+  '📚': 'libros libro lectura lectores leer literatura novelas novela poesia',
+  '✍️': 'escritores escribir relatos',
+  '🎨': 'arte dibujo pintura manualidades',
+  '📷': 'fotografia fotos foto',
+  '💻': 'tecnologia informatica programacion programadores ordenadores ordenador pc linux android iphone apps internet',
+  '🤖': 'ia inteligencia robots robotica',
+  '🔬': 'ciencia ciencias fisica quimica biologia',
+  '🚀': 'espacio astronomia nasa',
+  '🌍': 'viajes viajar viajeros turismo mundo mochileros',
+  '✈️': 'vuelos aviones aviacion',
+  '🍳': 'cocina cocineros recetas cocinar gastronomia reposteria',
+  '🍷': 'vino vinos tapas',
+  '🍺': 'cerveza cervezas',
+  '☕': 'cafe cafeteria tertulia',
+  '🐶': 'perros perro',
+  '🐱': 'gatos gato',
+  '🐾': 'mascotas animales',
+  '🌳': 'naturaleza campo bosque',
+  '🌱': 'plantas jardin huerto jardineria',
+  '⛰️': 'senderismo montana montanismo excursiones',
+  '🎣': 'pesca',
+  '🏖️': 'playa verano vacaciones',
+  '⛷️': 'nieve esqui snowboard',
+  '💼': 'trabajo empleo negocios emprendedores empresa autonomos',
+  '💰': 'finanzas inversion bolsa dinero economia ahorro',
+  '🎓': 'estudios estudiantes universidad oposiciones colegio',
+  '🗣️': 'idiomas ingles frances aleman debates debate',
+  '🩺': 'salud medicina',
+  '❤️': 'amistad amigos amor parejas',
+  '💘': 'citas solteros ligar',
+  '😂': 'humor chistes risas memes',
+  '🎉': 'fiesta fiestas cumpleanos celebracion',
+  '👨‍👩‍👧': 'familia padres madres hijos',
+  '👵': 'mayores jubilados abuelos',
+  '🙏': 'fe religion oracion',
+  '📰': 'noticias actualidad',
+  '🗳️': 'politica elecciones',
+  '🏛️': 'historia',
+  '🛠️': 'bricolaje reparaciones mecanica',
+  '👗': 'moda belleza',
+  '🏡': 'casa hogar decoracion',
+  '🌙': 'noche insomnes madrugada',
+  '🎭': 'teatro',
+  '👋': 'bienvenida bienvenidos presentaciones saludos novatos'
+};
+const MAPA_ICONOS_SALA = new Map();
+Object.entries(ICONOS_SALA).forEach(([icono, palabras]) => palabras.split(' ').forEach(p => { if (!MAPA_ICONOS_SALA.has(p)) MAPA_ICONOS_SALA.set(p, icono); }));
+function iconoParaNombre(nombre) {
+  const texto = String(nombre || '');
+  if (/^\s*\p{Extended_Pictographic}/u.test(texto)) return ''; // ya empieza por un emoji: se respeta
+  const palabras = texto.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(/[^a-z0-9]+/).filter(Boolean);
+  for (const w of palabras) {
+    if (MAPA_ICONOS_SALA.has(w)) return MAPA_ICONOS_SALA.get(w);
+    if (w.length >= 5) { for (const [k, ic] of MAPA_ICONOS_SALA) { if (k.length >= 5 && w.startsWith(k)) return ic; } }
+  }
+  return '💬';
+}
+
 // ---- Salas fijas: sobreviven a reinicios porque se guardan en la base de datos ----
 async function cargarSalasFijas() {
   if (!salasFijasCol) return;
@@ -216,13 +299,13 @@ async function cargarSalasFijas() {
     const docs = await salasFijasCol.find({}).toArray();
     docs.forEach(d => {
       if (!d._id || salas.has(d._id)) return;
-      salas.set(d._id, { id: d._id, nombre: d.nombre, creador: d.creador || 'sistema', usuarios: new Set(), vacioDesde: null, permanente: true });
+      salas.set(d._id, { id: d._id, nombre: d.nombre, icono: d.icono !== undefined ? d.icono : iconoParaNombre(d.nombre), creador: d.creador || 'sistema', usuarios: new Set(), vacioDesde: null, permanente: true });
     });
   } catch (e) { console.log('No se pudieron cargar las salas fijas:', e.message); }
 }
 function guardarSalaFija(sala) {
   if (!salasFijasCol) return;
-  salasFijasCol.updateOne({ _id: sala.id }, { $set: { nombre: sala.nombre, creador: sala.creador } }, { upsert: true }).catch(() => {});
+  salasFijasCol.updateOne({ _id: sala.id }, { $set: { nombre: sala.nombre, icono: sala.icono || '', creador: sala.creador } }, { upsert: true }).catch(() => {});
 }
 function borrarSalaFija(id) {
   if (!salasFijasCol) return;
@@ -258,7 +341,7 @@ function listaSalasPara(socketId) {
   return Array.from(salas.values())
     .filter(s => !s.oculta || privilegiado)
     .map(s => ({
-      id: s.id, nombre: s.nombre, numUsuarios: s.usuarios.size, permanente: !!s.permanente, fija: !!s.fija,
+      id: s.id, nombre: s.nombre, icono: s.icono || '', numUsuarios: s.usuarios.size, permanente: !!s.permanente, fija: !!s.fija,
       puedeCerrar: !s.oculta && !s.fija && (privilegiado || (esCreadorDeSala(s, socketId) && !s.permanente)),
       puedeFijar: privilegiado && !s.oculta && !s.fija
     }));
@@ -978,7 +1061,7 @@ io.on('connection', (socket) => {
       return;
     }
     const id = 'sala_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
-    const sala = { id, nombre: nombreLimpio, creador: usuariosConectados.get(socket.id), creadorId: claveCreador(socket), usuarios: new Set(), vacioDesde: null, permanente: privilegiado };
+    const sala = { id, nombre: nombreLimpio, icono: iconoParaNombre(nombreLimpio), creador: usuariosConectados.get(socket.id), creadorId: claveCreador(socket), usuarios: new Set(), vacioDesde: null, permanente: privilegiado };
     salas.set(id, sala);
     if (sala.permanente) guardarSalaFija(sala);
     // Quien la crea entra directamente; el staff conectado (admin y moderadores) tambien, para tenerla controlada

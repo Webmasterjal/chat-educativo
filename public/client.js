@@ -282,7 +282,7 @@ function renderTodoElCentro() {
 
 function nombreDeSala(id) {
   const s = salasDisponibles.find(s => s.id === id);
-  return s ? s.nombre : '';
+  return s ? ((s.icono ? s.icono + ' ' : '') + s.nombre) : '';
 }
 
 function renderPestañas() {
@@ -533,9 +533,10 @@ function renderListaSalas() {
     const div = document.createElement('div');
     div.className = 'item-sala' + (s.id === salaActiva && !privadoActivo && unido ? ' activa' : '');
     div.style.setProperty('--c', colorDeSala(s.id));
-    const icono = s.fija ? ICONO_PLAZA + ' ' : ((s.permanente && s.id !== 'staff') ? '📌 ' : '');
+    const icono = s.fija ? ICONO_PLAZA + ' ' : (s.icono ? s.icono + ' ' : '');
+    const fijada = (s.permanente && s.id !== 'staff' && !s.fija) ? ' <span class="marca-fija" title="Sala fija">📌</span>' : '';
     div.innerHTML = `
-      <span>${icono}${escapar(s.nombre)} <small>(${s.numUsuarios})</small></span>
+      <span>${icono}${escapar(s.nombre)}${fijada} <small>(${s.numUsuarios})</small></span>
     `;
     if (unido) {
       const nombreEl = div.querySelector('span');
