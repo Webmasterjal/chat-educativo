@@ -19,7 +19,10 @@ function crearRecuperacion({ app, bcrypt, getUsuarios, getTokens, alCambiarContr
   const llamar = fetchFn || globalThis.fetch;
   const baseUrl = (env.URL_PUBLICA || 'https://chat-educativo-qgub.onrender.com').replace(/\/$/, '');
 
-  const activo = () => !!(env.BREVO_API_KEY && env.EMAIL_REMITENTE);
+  // Se limpian espacios y saltos de linea (muy habituales al pegar la clave en Render)
+  const claveBrevo = () => String(env.BREVO_API_KEY || '').trim();
+  const remitente = () => String(env.EMAIL_REMITENTE || '').trim();
+  const activo = () => !!(claveBrevo() && remitente());
 
   // ---------- Límites de intentos (en memoria) ----------
   const golpes = new Map();
@@ -90,9 +93,9 @@ ${url ? `<p style="margin:22px 0"><a href="${esc(url)}" style="background:#6D4AF
     try {
       const r = await llamar('https://api.brevo.com/v3/smtp/email', {
         method: 'POST',
-        headers: { accept: 'application/json', 'content-type': 'application/json', 'api-key': env.BREVO_API_KEY },
+        headers: { accept: 'application/json', 'content-type': 'application/json', 'api-key': claveBrevo() },
         body: JSON.stringify({
-          sender: { name: 'La Plaza', email: env.EMAIL_REMITENTE },
+          sender: { name: 'La Plaza', email: remitente() },
           to: [{ email: para }],
           subject: asunto,
           textContent: contenido.texto,
@@ -110,6 +113,58 @@ ${url ? `<p style="margin:22px 0"><a href="${esc(url)}" style="background:#6D4AF
     } catch (e) {
       console.error('Correo: error al enviar:', e.message);
       return false;
+    }
+  }
+
+  // ---------- Prueba de envio para el administrador: explica el motivo real del fallo ----------
+  function pistaDeFallo(status, detalle) {
+    const d = String(detalle || '').toLowerCase();
+    if (status === 401 && (d.includes('ip') && (d.includes('unrecognised') || d.includes('unrecognized') || d.includes('authorised') || d.includes('authorized')))) {
+      return 'Brevo está bloqueando la dirección IP del servidor. Solución: en Brevo entra en tu nombre (arriba a la derecha) > Security > Authorised IPs y desactiva el bloqueo (Deactivate blocking). Render cambia de IP y por eso no se puede dejar una fija.';
+    }
+    if (status === 401) {
+      return 'Brevo no reconoce la clave API. Posibles causas: (1) la regeneraste en Brevo y no actualizaste BREVO_API_KEY en Render; (2) se pegó con un trozo de menos o de más; (3) es una clave SMTP (empieza por xsmtpsib-) y hace falta una clave API (empieza por xkeysib-). Solución: en Brevo crea una clave nueva en SMTP & API > API Keys, cópiala entera y pégala en Render > Environment > BREVO_API_KEY.';
+    }
+    if (status === 400 && (d.includes('sender') || d.includes('remitente'))) {
+      return 'El remitente no está verificado en Brevo. Solución: en Brevo entra en Senders, domains & dedicated IPs > Senders y comprueba que ' + remitente() + ' aparece como verificado (con la marca verde). Si no, añádelo y confirma el correo que te envían.';
+    }
+    if (status === 400) return 'Brevo ha rechazado el contenido de la petición. Revisa el detalle de arriba.';
+    if (status === 403) return 'Brevo no permite enviar con esta cuenta. Suele ser porque la cuenta aún no está activada o validada: entra en Brevo y mira si hay algún aviso pendiente, o escribe a su soporte.';
+    if (status === 402 || status === 429) return 'Se ha alcanzado el límite de envíos de Brevo (300 al día en el plan gratuito) o hay demasiadas peticiones seguidas. Espera un rato.';
+    if (status >= 500) return 'Brevo tiene problemas ahora mismo. Inténtalo de nuevo más tarde.';
+    return 'Revisa el detalle que devuelve Brevo.';
+  }
+  async function probarEnvio(para) {
+    const faltan = [];
+    if (!claveBrevo()) faltan.push('BREVO_API_KEY');
+    if (!remitente()) faltan.push('EMAIL_REMITENTE');
+    if (faltan.length) {
+      return { ok: false, texto: 'Faltan estas variables en Render (servicio > Environment): ' + faltan.join(' y ') + '. Sin ellas el chat no puede enviar correos.' };
+    }
+    const tipo = (/^(x[a-z]+-)/i.exec(claveBrevo()) || [])[1] || '(sin prefijo conocido)';
+    const datos = 'Remitente configurado: ' + remitente() + ' · Tipo de clave: ' + tipo;
+    try {
+      const r = await llamar('https://api.brevo.com/v3/smtp/email', {
+        method: 'POST',
+        headers: { accept: 'application/json', 'content-type': 'application/json', 'api-key': claveBrevo() },
+        body: JSON.stringify({
+          sender: { name: 'La Plaza', email: remitente() },
+          to: [{ email: para }],
+          subject: 'Prueba de envío de La Plaza',
+          textContent: 'Si lees esto, el envío de correos de La Plaza funciona correctamente.',
+          htmlContent: '<p>Si lees esto, el envío de correos de <b>La Plaza</b> funciona correctamente.</p>'
+        }),
+        signal: AbortSignal.timeout(10000)
+      });
+      if (r.ok) {
+        return { ok: true, texto: 'Brevo ha aceptado el correo de prueba para ' + para + '. Mira la bandeja de entrada y también el spam (puede tardar un par de minutos).\n\n' + datos };
+      }
+      let detalle = '';
+      try { detalle = (await r.text()).slice(0, 300); } catch (e) { /* nada */ }
+      return { ok: false, texto: 'Brevo ha respondido con el error ' + r.status + (detalle ? ': ' + detalle : '') + '\n\n' + pistaDeFallo(r.status, detalle) + '\n\n' + datos };
+    } catch (e) {
+      const tiempo = e && (e.name === 'TimeoutError' || e.name === 'AbortError');
+      return { ok: false, texto: (tiempo ? 'Brevo no ha respondido en 10 segundos.' : 'No se ha podido conectar con Brevo (' + (e && e.message) + ').') + ' Si se repite, puede ser un problema de red del servidor o de Brevo.\n\n' + datos };
     }
   }
 
@@ -248,7 +303,7 @@ ${url ? `<p style="margin:22px 0"><a href="${esc(url)}" style="background:#6D4AF
     }
   });
 
-  return { activo, permitir, normalizarEmail, emailValido, enmascarar, validarContrasena, enviarVerificacion, avisarCambioCorreo, avisarEliminacion };
+  return { activo, probarEnvio, permitir, normalizarEmail, emailValido, enmascarar, validarContrasena, enviarVerificacion, avisarCambioCorreo, avisarEliminacion };
 }
 
 module.exports = { crearRecuperacion, MIN_CONTRASENA, MAX_CONTRASENA };

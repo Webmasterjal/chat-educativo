@@ -1124,3 +1124,7 @@ html[data-tema="oscuro"] .aviso-limite-salas { background: #3a2f10; color: #ffe9
 /* El nombre de la sala puede ocupar dos líneas (con los botones del staff quedaba cortado) */
 .item-sala > span { white-space: normal; overflow: hidden; text-overflow: clip; overflow-wrap: anywhere; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .marca-fija { font-size: 0.8em; }
+
+.item-sala .btn-fotos-sala { background: transparent; color: var(--tinta-suave); padding: 6px; opacity: 0.45; }
+.item-sala .btn-fotos-sala.activa { opacity: 1; }
+.item-sala .btn-fotos-sala:hover { opacity: 1; }

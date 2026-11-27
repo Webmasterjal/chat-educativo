@@ -343,15 +343,22 @@ function renderBarraPrivado() {
   pintarLlamada();
 }
 
+function salaActivaPermiteFotos() {
+  const sl = salasDisponibles.find(x => x.id === salaActiva);
+  return !!sl && !!sl.fotos;
+}
+
 function actualizarCompositor() {
   const p = privadoActual();
   if (p) {
     entrada.disabled = !p.conectado;
     btnAdjuntar.disabled = !p.conectado;
+    btnAdjuntar.classList.remove('oculto'); // en los privados las fotos siguen disponibles
     entrada.placeholder = p.conectado ? `Mensaje privado para ${p.conNick}...` : 'Esta persona se ha desconectado';
   } else {
     entrada.disabled = !salaActiva;
     btnAdjuntar.disabled = !salaActiva;
+    btnAdjuntar.classList.toggle('oculto', !salaActivaPermiteFotos());
     entrada.placeholder = salaActiva ? 'Escribe algo con respeto y buen humor...' : 'Entra en una sala para escribir';
   }
 }
@@ -526,6 +533,7 @@ function renderListaSalas() {
   // Con 10 salas no se muestra la opción de crear otra (hasta que se elimine alguna)
   const salasLlenas = salasVisiblesCount >= 10;
   formCrearSala.classList.toggle('oculto', salasLlenas);
+  setTimeout(actualizarCompositor, 0);
   avisoLimiteSalas.classList.toggle('oculto', !salasLlenas);
   listaSalasEl.innerHTML = '';
   salasDisponibles.forEach(s => {
@@ -534,7 +542,7 @@ function renderListaSalas() {
     div.className = 'item-sala' + (s.id === salaActiva && !privadoActivo && unido ? ' activa' : '');
     div.style.setProperty('--c', colorDeSala(s.id));
     const icono = s.fija ? ICONO_PLAZA + ' ' : (s.icono ? s.icono + ' ' : '');
-    const fijada = (s.permanente && s.id !== 'staff' && !s.fija) ? ' <span class="marca-fija" title="Sala fija">📌</span>' : '';
+    const fijada = ((s.permanente && s.id !== 'staff' && !s.fija) ? ' <span class="marca-fija" title="Sala fija">📌</span>' : '') + ((s.fotos && s.id !== 'staff') ? ' <span class="marca-fija" title="Se permiten fotos">📷</span>' : '');
     div.innerHTML = `
       <span>${icono}${escapar(s.nombre)}${fijada} <small>(${s.numUsuarios})</small></span>
     `;
@@ -562,6 +570,16 @@ function renderListaSalas() {
       btnFijar.title = s.permanente ? 'Dejar de fijar esta sala' : 'Dejar esta sala fija';
       btnFijar.addEventListener('click', () => socket.emit('fijarSala', { salaId: s.id, fijar: !s.permanente }));
       div.appendChild(btnFijar);
+    }
+
+    if (s.puedeFotos) {
+      const btnFotos = document.createElement('button');
+      btnFotos.type = 'button';
+      btnFotos.textContent = '📷';
+      btnFotos.className = 'btn-fotos-sala' + (s.fotos ? ' activa' : '');
+      btnFotos.title = s.fotos ? 'Quitar el permiso de fotos en esta sala' : 'Permitir fotos en esta sala';
+      btnFotos.addEventListener('click', () => socket.emit('permitirFotos', { salaId: s.id, permitir: !s.fotos }));
+      div.appendChild(btnFotos);
     }
 
     if (s.puedeCerrar) {
@@ -1010,6 +1028,7 @@ function manejarArchivoSeleccionado(file, destino) {
     const dataUrl = lector.result;
     if (destino.tipo === 'sala') {
       if (!salaActiva) { avisar('Entra en una sala antes de enviar una imagen.'); return; }
+      if (!salaActivaPermiteFotos()) { avisar('En esta sala no se pueden enviar fotos. Las puede activar un moderador.'); return; }
       socket.emit('mensajeSala', { salaId: salaActiva, imagenDataUrl: dataUrl, imagenNombre: file.name });
     } else {
       socket.emit('imagenPrivada', { canalId: destino.canalId, imagenDataUrl: dataUrl, imagenNombre: file.name });
@@ -1355,6 +1374,16 @@ socket.on('connect', () => bannerConexion.classList.add('oculto'));
 setTimeout(() => {
   if (!socket.connected) estadoConexion.textContent = 'El servidor estaba dormido y se está despertando. Puede tardar hasta un minuto…';
 }, 7000);
+
+// ---- Prueba de envío de correos (solo administrador) ----
+document.getElementById('btnProbarCorreo').addEventListener('click', async () => {
+  const para = await pedirTexto('¿A qué correo quieres enviar la prueba? (por ejemplo, el tuyo)', { titulo: '📧 Probar el envío de correos', tipo: 'email', placeholder: 'tucorreo@gmail.com', aceptar: 'Enviar prueba' });
+  if (para && para.trim()) {
+    mostrarToast('Enviando prueba…');
+    socket.emit('probarCorreo', { para: para.trim() });
+  }
+});
+socket.on('resultadoCorreo', ({ ok, texto }) => avisar(texto, ok ? '✅ Correo enviado' : '⚠️ No se ha podido enviar'));
 
 // ---- Fotos pendientes (solo el administrador) ----
 const listaFotos = document.getElementById('listaFotos');

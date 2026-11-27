@@ -178,13 +178,13 @@ const salas = new Map();              // salaId -> { id, nombre, creador, usuari
 // Sala fija, oculta y permanente solo para admin/moderadores. Nadie mas sabe que existe.
 salas.set('staff', {
   id: 'staff', nombre: '👑 Sala Staff', creador: 'sistema',
-  usuarios: new Set(), vacioDesde: null, permanente: true, oculta: true
+  usuarios: new Set(), vacioDesde: null, permanente: true, oculta: true, imagenes: true
 });
 
 // La Plaza: sala fija y pública, punto de encuentro de todo el mundo. No se puede cerrar nunca.
 salas.set('plaza', {
   id: 'plaza', nombre: 'La Plaza', creador: 'sistema',
-  usuarios: new Set(), vacioDesde: null, permanente: true, fija: true
+  usuarios: new Set(), vacioDesde: null, permanente: true, fija: true, imagenes: false
 });
 let adminSocketId = null;
 const moderadores = new Set();        // socketId
@@ -292,20 +292,32 @@ function iconoParaNombre(nombre) {
   return '💬';
 }
 
+// ---- Fotos por sala: las salas nuevas NO permiten fotos; las activa el staff. La sala Staff siempre las permite ----
+const salaPermiteFotos = (sala) => !!sala && (sala.id === 'staff' || !!sala.imagenes);
+function guardarAjustesSala(sala) {
+  if (!salasFijasCol) return;
+  if (sala.id === 'plaza') {
+    salasFijasCol.updateOne({ _id: 'plaza' }, { $set: { nombre: sala.nombre, imagenes: !!sala.imagenes, soloAjustes: true } }, { upsert: true }).catch(() => {});
+  } else if (sala.permanente && !sala.oculta) {
+    guardarSalaFija(sala);
+  }
+}
+
 // ---- Salas fijas: sobreviven a reinicios porque se guardan en la base de datos ----
 async function cargarSalasFijas() {
   if (!salasFijasCol) return;
   try {
     const docs = await salasFijasCol.find({}).toArray();
     docs.forEach(d => {
+      if (d._id === 'plaza') { const pl = salas.get('plaza'); if (pl) pl.imagenes = !!d.imagenes; return; }
       if (!d._id || salas.has(d._id)) return;
-      salas.set(d._id, { id: d._id, nombre: d.nombre, icono: d.icono !== undefined ? d.icono : iconoParaNombre(d.nombre), creador: d.creador || 'sistema', usuarios: new Set(), vacioDesde: null, permanente: true });
+      salas.set(d._id, { id: d._id, nombre: d.nombre, icono: d.icono !== undefined ? d.icono : iconoParaNombre(d.nombre), creador: d.creador || 'sistema', imagenes: !!d.imagenes, usuarios: new Set(), vacioDesde: null, permanente: true });
     });
   } catch (e) { console.log('No se pudieron cargar las salas fijas:', e.message); }
 }
 function guardarSalaFija(sala) {
   if (!salasFijasCol) return;
-  salasFijasCol.updateOne({ _id: sala.id }, { $set: { nombre: sala.nombre, icono: sala.icono || '', creador: sala.creador } }, { upsert: true }).catch(() => {});
+  salasFijasCol.updateOne({ _id: sala.id }, { $set: { nombre: sala.nombre, icono: sala.icono || '', creador: sala.creador, imagenes: !!sala.imagenes } }, { upsert: true }).catch(() => {});
 }
 function borrarSalaFija(id) {
   if (!salasFijasCol) return;
@@ -343,7 +355,9 @@ function listaSalasPara(socketId) {
     .map(s => ({
       id: s.id, nombre: s.nombre, icono: s.icono || '', numUsuarios: s.usuarios.size, permanente: !!s.permanente, fija: !!s.fija,
       puedeCerrar: !s.oculta && !s.fija && (privilegiado || (esCreadorDeSala(s, socketId) && !s.permanente)),
-      puedeFijar: privilegiado && !s.oculta && !s.fija
+      puedeFijar: privilegiado && !s.oculta && !s.fija,
+      fotos: salaPermiteFotos(s),
+      puedeFotos: privilegiado && !s.oculta
     }));
 }
 
@@ -1061,7 +1075,7 @@ io.on('connection', (socket) => {
       return;
     }
     const id = 'sala_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
-    const sala = { id, nombre: nombreLimpio, icono: iconoParaNombre(nombreLimpio), creador: usuariosConectados.get(socket.id), creadorId: claveCreador(socket), usuarios: new Set(), vacioDesde: null, permanente: privilegiado };
+    const sala = { id, nombre: nombreLimpio, imagenes: false, icono: iconoParaNombre(nombreLimpio), creador: usuariosConectados.get(socket.id), creadorId: claveCreador(socket), usuarios: new Set(), vacioDesde: null, permanente: privilegiado };
     salas.set(id, sala);
     if (sala.permanente) guardarSalaFija(sala);
     // Quien la crea entra directamente; el staff conectado (admin y moderadores) tambien, para tenerla controlada
@@ -1075,6 +1089,17 @@ io.on('connection', (socket) => {
     const esLaUltima = totalAhora >= MAX_SALAS;
     io.emit('sistema', { texto: `${usuariosConectados.get(socket.id)} ha creado la sala "${nombreLimpio}"` + (esLaUltima ? ` · Ya hay ${MAX_SALAS} salas: no se podrán crear más hasta que se elimine alguna.` : '') });
     if (esLaUltima) socket.emit('avisoOk', `Has creado la última sala que se puede crear (${MAX_SALAS} de ${MAX_SALAS}). No se podrán crear más hasta que se elimine alguna.`);
+  });
+
+  // ---- Permitir o quitar las fotos en una sala (solo staff) ----
+  socket.on('permitirFotos', ({ salaId, permitir }) => {
+    if (!esModOAdmin(socket.id)) return;
+    const sala = salas.get(salaId);
+    if (!sala || sala.oculta) return;
+    sala.imagenes = !!permitir;
+    guardarAjustesSala(sala);
+    emitirSalasATodos();
+    io.to(sala.id).emit('sistema', { texto: sala.imagenes ? `📷 Se han permitido las fotos en la sala "${sala.nombre}".` : `📷 Ya no se permiten fotos en la sala "${sala.nombre}".` });
   });
 
   // ---- Fijar / desfijar una sala (solo staff). Una sala fija no se borra aunque quede vacia ----
@@ -1152,6 +1177,10 @@ io.on('connection', (socket) => {
     }
 
     if (imagenDataUrl) {
+      if (!salaPermiteFotos(sala)) {
+        socket.emit('error_app', 'En esta sala no se pueden enviar fotos. Las puede activar un moderador.');
+        return;
+      }
       if (!esImagenValida(imagenDataUrl)) {
         socket.emit('error_app', 'Solo se permiten imagenes (foto o GIF) de hasta 4MB.');
         return;
@@ -1361,6 +1390,16 @@ io.on('connection', (socket) => {
     const uClave = socketDestino.data.registrado && socketDestino.data.usuario ? socketDestino.data.usuario.toLowerCase() : null;
     const n = await nivelSiguiente(obtenerIP(socketDestino), uClave);
     socket.emit('previaBloqueo', { nick: nickObjetivo, nivel: n.nivel, horas: n.horas, duracion: textoDuracion(n.horas), previos: n.previos, registrado: !!uClave });
+  });
+
+  // ---- Prueba del envio de correos (solo administrador): dice el motivo real si falla ----
+  socket.on('probarCorreo', async ({ para }) => {
+    if (socket.id !== adminSocketId) return;
+    const dest = recuperacion.normalizarEmail(para || '');
+    if (!recuperacion.emailValido(dest)) { socket.emit('error_app', 'Escribe un correo válido para la prueba.'); return; }
+    if (!recuperacion.permitir('probar-correo', 6, 10 * 60 * 1000)) { socket.emit('error_app', 'Demasiadas pruebas seguidas. Espera unos minutos.'); return; }
+    const r = await recuperacion.probarEnvio(dest);
+    socket.emit('resultadoCorreo', r);
   });
 
   socket.on('banearIP', async ({ nickObjetivo, motivo, horas }) => {
