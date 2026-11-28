@@ -542,7 +542,8 @@ function renderListaSalas() {
     div.className = 'item-sala' + (s.id === salaActiva && !privadoActivo && unido ? ' activa' : '');
     div.style.setProperty('--c', colorDeSala(s.id));
     const icono = s.fija ? ICONO_PLAZA + ' ' : (s.icono ? s.icono + ' ' : '');
-    const fijada = ((s.permanente && s.id !== 'staff' && !s.fija) ? ' <span class="marca-fija" title="Sala fija">📌</span>' : '') + ((s.fotos && s.id !== 'staff') ? ' <span class="marca-fija" title="Se permiten fotos">📷</span>' : '');
+    // Estas marcas son solo para el staff: los usuarios no ven si una sala es fija o si permite fotos
+    const fijada = !esPrivilegiado() ? '' : (((s.permanente && s.id !== 'staff' && !s.fija) ? ' <span class="marca-fija" title="Sala fija">📌</span>' : '') + ((s.fotos && s.id !== 'staff') ? ' <span class="marca-fija" title="Se permiten fotos">📷</span>' : ''));
     div.innerHTML = `
       <span>${icono}${escapar(s.nombre)}${fijada} <small>(${s.numUsuarios})</small></span>
     `;

@@ -348,15 +348,19 @@ function esCreadorDeSala(sala, socketId) {
   return !!sk && !!sala.creadorId && sala.creadorId === claveCreador(sk);
 }
 
+// Lo que un usuario normal NO debe saber de una sala que no ha pisado: si permite fotos o si esta fija.
+// Eso solo lo ve el staff (y las fotos, ademas, quien esta dentro de la sala, porque lo nota en su barra de escribir).
 function listaSalasPara(socketId) {
   const privilegiado = esModOAdmin(socketId);
+  const sk = io.sockets.sockets.get(socketId);
+  const dentroDe = (id) => !!(sk && sk.data && sk.data.salasUnidas && sk.data.salasUnidas.has(id));
   return Array.from(salas.values())
     .filter(s => !s.oculta || privilegiado)
     .map(s => ({
-      id: s.id, nombre: s.nombre, icono: s.icono || '', numUsuarios: s.usuarios.size, permanente: !!s.permanente, fija: !!s.fija,
+      id: s.id, nombre: s.nombre, icono: s.icono || '', numUsuarios: s.usuarios.size, permanente: privilegiado ? !!s.permanente : false, fija: !!s.fija,
       puedeCerrar: !s.oculta && !s.fija && (privilegiado || (esCreadorDeSala(s, socketId) && !s.permanente)),
       puedeFijar: privilegiado && !s.oculta && !s.fija,
-      fotos: salaPermiteFotos(s),
+      fotos: (privilegiado || dentroDe(s.id)) ? salaPermiteFotos(s) : false,
       puedeFotos: privilegiado && !s.oculta
     }));
 }
@@ -1111,7 +1115,8 @@ io.on('connection', (socket) => {
     if (sala.permanente) { sala.vacioDesde = null; guardarSalaFija(sala); }
     else { marcarEstadoVacio(sala); borrarSalaFija(sala.id); }
     emitirSalasATodos();
-    io.emit('sistema', { texto: sala.permanente ? `La sala "${sala.nombre}" ha quedado fija` : `La sala "${sala.nombre}" ya no esta fija` });
+    // Solo el staff se entera: los usuarios no tienen por que saber si una sala esta fija
+    [adminSocketId, ...moderadores].filter(Boolean).forEach(id => io.to(id).emit('sistema', { texto: sala.permanente ? `📌 La sala "${sala.nombre}" ha quedado fija` : `📌 La sala "${sala.nombre}" ya no esta fija` }));
   });
 
   // ---- Unirse a sala ----
